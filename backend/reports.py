@@ -52,15 +52,18 @@ def sales_sections(db, start, end):
         ("Average sale", ksh(k["avg"])), ("Items sold", f"{k['items']:,}"), ("Points discounts", ksh(k["discounts"])),
     ]
     daily = db.execute(
-        "SELECT date(t.created_at) AS day, COUNT(*) AS n, SUM(t.items_count) AS items, SUM(t.total) AS revenue,"
-        " (SELECT COALESCE(SUM(s.total - COALESCE(s.unit_cost, 0) * s.quantity), 0) FROM sales s"
-        "  WHERE date(s.created_at) = date(t.created_at)) AS profit"
-        " FROM transactions t WHERE t.created_at >= ? AND t.created_at < ? GROUP BY day ORDER BY day", (a, b)).fetchall()
+        "SELECT d.day, d.n, d.items, d.revenue, COALESCE(p.profit, 0) AS profit FROM ("
+        "  SELECT left(created_at, 10) AS day, COUNT(*) AS n, SUM(items_count) AS items, SUM(total) AS revenue"
+        "  FROM transactions WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)) d"
+        " LEFT JOIN ("
+        "  SELECT left(created_at, 10) AS day, SUM(total - COALESCE(unit_cost, 0) * quantity) AS profit"
+        "  FROM sales WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)) p ON p.day = d.day"
+        " ORDER BY d.day", (a, b, a, b)).fetchall()
     pays = db.execute(
         "SELECT payment_method, COUNT(*) AS n, SUM(total) AS revenue FROM transactions"
         " WHERE created_at >= ? AND created_at < ? GROUP BY payment_method ORDER BY revenue DESC", (a, b)).fetchall()
     receipts = db.execute(
-        "SELECT t.*, c.name AS customer, (SELECT GROUP_CONCAT(s.quantity || 'x ' || p.name, '; ') FROM sales s"
+        "SELECT t.*, c.name AS customer, (SELECT string_agg(s.quantity || 'x ' || p.name, '; ' ORDER BY s.id) FROM sales s"
         " JOIN products p ON p.id = s.product_id WHERE s.transaction_id = t.id) AS items"
         " FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id"
         " WHERE t.created_at >= ? AND t.created_at < ? ORDER BY t.created_at LIMIT 1000", (a, b)).fetchall()

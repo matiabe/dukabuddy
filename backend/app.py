@@ -1,7 +1,6 @@
-"""DukaBuddy backend - Flask + SQLite."""
+"""DukaBuddy backend - Flask + PostgreSQL."""
 import json
 import os
-import sqlite3
 import urllib.error
 import urllib.request
 
@@ -10,7 +9,7 @@ from flask_cors import CORS
 
 import automation
 import reports
-from db import DB_PATH, close_db, get_db
+from db import LOCAL_NOW_FUNCTION, IntegrityError, close_db, connect, get_db
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
@@ -43,103 +42,108 @@ app.register_blueprint(automation.bp)
 app.register_blueprint(reports.bp)
 
 
-def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    db.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL DEFAULT 'General',
-            buying_price REAL NOT NULL CHECK (buying_price >= 0),
-            selling_price REAL NOT NULL CHECK (selling_price >= 0),
-            quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
-            reorder_level INTEGER NOT NULL DEFAULT 5 CHECK (reorder_level >= 0),
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS sales (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER NOT NULL REFERENCES products(id),
-            quantity INTEGER NOT NULL CHECK (quantity > 0),
-            unit_price REAL NOT NULL,
-            total REAL NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS restocks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            product_id INTEGER NOT NULL REFERENCES products(id),
-            quantity INTEGER NOT NULL CHECK (quantity > 0),
-            unit_cost REAL NOT NULL,
-            total_cost REAL NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            phone TEXT NOT NULL UNIQUE,
-            points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0),
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS loyalty_points (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER NOT NULL REFERENCES customers(id),
-            points INTEGER NOT NULL,
-            type TEXT NOT NULL CHECK (type IN ('earn', 'redeem', 'bonus')),
-            reason TEXT,
-            sale_id INTEGER REFERENCES sales(id),
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_id INTEGER REFERENCES customers(id),
-            subtotal REAL NOT NULL,
-            discount REAL NOT NULL DEFAULT 0,
-            total REAL NOT NULL,
-            items_count INTEGER NOT NULL,
-            payment_method TEXT NOT NULL DEFAULT 'Cash',
-            amount_paid REAL NOT NULL,
-            change_given REAL NOT NULL DEFAULT 0,
-            points_earned INTEGER NOT NULL DEFAULT 0,
-            points_redeemed INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        """
-    )
-    # Migrate older databases: add loyalty columns to sales if missing
-    sale_cols = {r[1] for r in db.execute("PRAGMA table_info(sales)")}
-    for col, ddl in [
-        ("customer_id", "INTEGER REFERENCES customers(id)"),
-        ("discount", "REAL NOT NULL DEFAULT 0"),
-        ("points_earned", "INTEGER NOT NULL DEFAULT 0"),
-        ("points_redeemed", "INTEGER NOT NULL DEFAULT 0"),
-        ("transaction_id", "INTEGER REFERENCES transactions(id)"),
-        ("unit_cost", "REAL"),  # buying price at time of sale, for profit tracking
-    ]:
-        if col not in sale_cols:
-            db.execute(f"ALTER TABLE sales ADD COLUMN {col} {ddl}")
+SCHEMA = [
+    LOCAL_NOW_FUNCTION,
+    """CREATE TABLE IF NOT EXISTS products (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL DEFAULT 'General',
+        buying_price DOUBLE PRECISION NOT NULL CHECK (buying_price >= 0),
+        selling_price DOUBLE PRECISION NOT NULL CHECK (selling_price >= 0),
+        quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+        reorder_level INTEGER NOT NULL DEFAULT 5 CHECK (reorder_level >= 0),
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL UNIQUE,
+        points INTEGER NOT NULL DEFAULT 0 CHECK (points >= 0),
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS transactions (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER REFERENCES customers(id),
+        subtotal DOUBLE PRECISION NOT NULL,
+        discount DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total DOUBLE PRECISION NOT NULL,
+        items_count INTEGER NOT NULL,
+        payment_method TEXT NOT NULL DEFAULT 'Cash',
+        amount_paid DOUBLE PRECISION NOT NULL,
+        change_given DOUBLE PRECISION NOT NULL DEFAULT 0,
+        points_earned INTEGER NOT NULL DEFAULT 0,
+        points_redeemed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS sales (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        unit_price DOUBLE PRECISION NOT NULL,
+        unit_cost DOUBLE PRECISION,  -- buying price at time of sale, for profit tracking
+        total DOUBLE PRECISION NOT NULL,
+        customer_id INTEGER REFERENCES customers(id),
+        discount DOUBLE PRECISION NOT NULL DEFAULT 0,
+        points_earned INTEGER NOT NULL DEFAULT 0,
+        points_redeemed INTEGER NOT NULL DEFAULT 0,
+        transaction_id INTEGER REFERENCES transactions(id),
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS restocks (
+        id SERIAL PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        unit_cost DOUBLE PRECISION NOT NULL,
+        total_cost DOUBLE PRECISION NOT NULL,
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    """CREATE TABLE IF NOT EXISTS loyalty_points (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id),
+        points INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('earn', 'redeem', 'bonus')),
+        reason TEXT,
+        sale_id INTEGER REFERENCES sales(id),
+        created_at TEXT NOT NULL DEFAULT local_now()
+    )""",
+    # indexes for the date filters and joins used by reports
+    "CREATE INDEX IF NOT EXISTS idx_sales_created ON sales (created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_sales_product ON sales (product_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sales_transaction ON sales (transaction_id)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions (created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_transactions_customer ON transactions (customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loyalty_customer ON loyalty_points (customer_id)",
+]
 
-    if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
-        db.executemany(
-            "INSERT INTO products (name, category, buying_price, selling_price, quantity, reorder_level)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            SAMPLE_PRODUCTS,
-        )
-        # A few sample sales so the demo dashboard isn't empty (stock already reflects them)
-        samples = [(1, 3), (3, 2), (6, 4), (15, 6), (7, 2), (13, 5)]
-        for pid, qty in samples:
-            price = db.execute("SELECT selling_price FROM products WHERE id = ?", (pid,)).fetchone()[0]
-            db.execute(
-                "INSERT INTO sales (product_id, quantity, unit_price, total) VALUES (?, ?, ?, ?)",
-                (pid, qty, price, price * qty),
+
+def init_db():
+    db = connect()
+    try:
+        for stmt in SCHEMA:
+            db.execute(stmt)
+        if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
+            db.executemany(
+                "INSERT INTO products (name, category, buying_price, selling_price, quantity, reorder_level)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                SAMPLE_PRODUCTS,
             )
-    if db.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
-        seed_customers(db)
-    automation.init_automation(db)
-    seed_automation_demo(db)
-    backfill_transactions(db)
-    db.commit()
-    db.close()
+            # A few sample sales so the demo dashboard isn't empty (stock already reflects them)
+            ids = {r["name"]: r["id"] for r in db.execute("SELECT id, name FROM products")}
+            for idx, qty in [(1, 3), (3, 2), (6, 4), (15, 6), (7, 2), (13, 5)]:
+                pid = ids[SAMPLE_PRODUCTS[idx - 1][0]]
+                price = db.execute("SELECT selling_price FROM products WHERE id = ?", (pid,)).fetchone()[0]
+                db.execute(
+                    "INSERT INTO sales (product_id, quantity, unit_price, total) VALUES (?, ?, ?, ?)",
+                    (pid, qty, price, price * qty),
+                )
+        if db.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
+            seed_customers(db)
+        automation.init_automation(db)
+        seed_automation_demo(db)
+        backfill_transactions(db)
+        db.commit()
+    finally:
+        db.close()
 
 
 def seed_automation_demo(db):
@@ -149,8 +153,8 @@ def seed_automation_demo(db):
         return
     names = [p[0] for p in SAMPLE_PRODUCTS]
     db.execute(
-        f"UPDATE products SET created_at = datetime('now', 'localtime', '-60 days') WHERE name IN ({','.join('?' * len(names))})"
-        " AND created_at > datetime('now', 'localtime', '-60 days')", names)
+        f"UPDATE products SET created_at = local_now('-60 days') WHERE name IN ({','.join('?' * len(names))})"
+        " AND created_at > local_now('-60 days')", names)
     new_products = [  # name, category, buy, sell, qty, reorder, days ago, [(days ago, qty) sales]
         ("Del Monte Juice 1L", "Beverages", 210, 260, 4, 5, 6, [(5, 3), (3, 2), (2, 3), (1, 2)]),
         ("Ariel Detergent 500g", "Household", 150, 185, 15, 5, 10, []),
@@ -161,13 +165,13 @@ def seed_automation_demo(db):
             continue
         pid = db.execute(
             "INSERT INTO products (name, category, buying_price, selling_price, quantity, reorder_level, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime', ?))",
+            " VALUES (?, ?, ?, ?, ?, ?, local_now(?))",
             (name, cat, buy, sell, qty, reorder, f"-{age} days")).lastrowid
         for days_ago, q in sales:
             db.execute(
                 "INSERT INTO sales (product_id, quantity, unit_price, unit_cost, total, created_at)"
-                " VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime', ?, '-2 hours'))",
-                (pid, q, sell, buy, sell * q, f"-{days_ago} days"))
+                " VALUES (?, ?, ?, ?, ?, local_now(?))",
+                (pid, q, sell, buy, sell * q, f"-{days_ago} days -2 hours"))
     db.execute("INSERT INTO settings (key, value) VALUES ('demo_automation_seeded', '1')")
 
 
@@ -270,7 +274,7 @@ PRODUCT_QUERY = """
     FROM products p
     LEFT JOIN (
         SELECT product_id, COUNT(*) AS sales_count, SUM(quantity) AS units_sold, SUM(total) AS revenue,
-            SUM(CASE WHEN created_at >= datetime('now', 'localtime', '-7 days') THEN quantity ELSE 0 END) AS units_sold_7d,
+            SUM(CASE WHEN created_at >= local_now('-7 days') THEN quantity ELSE 0 END) AS units_sold_7d,
             MAX(created_at) AS last_sold_at
         FROM sales GROUP BY product_id
     ) s ON s.product_id = p.id
@@ -303,7 +307,7 @@ def fetch_product(db, pid):
 def low_stock_products(db):
     rows = db.execute(
         PRODUCT_QUERY
-        + " WHERE p.quantity <= p.reorder_level ORDER BY (p.quantity * 1.0 / MAX(p.reorder_level, 1)), p.name"
+        + " WHERE p.quantity <= p.reorder_level ORDER BY (p.quantity * 1.0 / GREATEST(p.reorder_level, 1)), p.name"
     ).fetchall()
     return [product_dict(r) for r in rows]
 
@@ -340,7 +344,7 @@ def add_product():
             (name, category, buying, selling, qty, reorder),
         )
         db.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         return jsonify(error=f"A product named '{name}' already exists."), 409
     return jsonify(fetch_product(db, cur.lastrowid)), 201
 
@@ -582,10 +586,10 @@ def list_transactions():
     db = get_db()
     where, params = [], []
     if request.args.get("from"):
-        where.append("date(t.created_at) >= date(?)")
+        where.append("left(t.created_at, 10) >= ?")
         params.append(request.args["from"])
     if request.args.get("to"):
-        where.append("date(t.created_at) <= date(?)")
+        where.append("left(t.created_at, 10) <= ?")
         params.append(request.args["to"])
     if request.args.get("payment"):
         where.append("t.payment_method = ?")
@@ -594,8 +598,8 @@ def list_transactions():
     if q:
         digits = "".join(ch for ch in q if ch.isdigit())
         where.append(
-            "(c.name LIKE ? OR c.phone LIKE ? OR t.id = ? OR EXISTS (SELECT 1 FROM sales s JOIN products p"
-            " ON p.id = s.product_id WHERE s.transaction_id = t.id AND p.name LIKE ?))"
+            "(c.name ILIKE ? OR c.phone ILIKE ? OR t.id = ? OR EXISTS (SELECT 1 FROM sales s JOIN products p"
+            " ON p.id = s.product_id WHERE s.transaction_id = t.id AND p.name ILIKE ?))"
         )
         params += [f"%{q}%", f"%{q}%", int(digits) if digits else -1, f"%{q}%"]
     clause = (" WHERE " + " AND ".join(where)) if where else ""
@@ -613,7 +617,7 @@ def list_transactions():
         params,
     ).fetchone()[0]
     daily = db.execute(
-        "SELECT date(t.created_at) AS day, COUNT(*) AS count, SUM(t.total) AS revenue" + base
+        "SELECT left(t.created_at, 10) AS day, COUNT(*) AS count, SUM(t.total) AS revenue" + base
         + " GROUP BY day ORDER BY day DESC LIMIT 31", params
     ).fetchall()
     payments = db.execute(
@@ -644,7 +648,7 @@ CUSTOMER_QUERY = """
         COALESCE(SUM(s.points_redeemed), 0) AS points_redeemed_total,
         MAX(s.created_at) AS last_visit,
         MIN(s.created_at) AS first_visit,
-        COUNT(DISTINCT CASE WHEN s.created_at >= datetime('now', 'localtime', '-30 days') THEN s.transaction_id END) AS visits_30d
+        COUNT(DISTINCT CASE WHEN s.created_at >= local_now('-30 days') THEN s.transaction_id END) AS visits_30d
     FROM customers c LEFT JOIN sales s ON s.customer_id = c.id
 """
 
@@ -722,7 +726,7 @@ def add_customer():
     try:
         cur = db.execute("INSERT INTO customers (name, phone) VALUES (?, ?)", (name, phone))
         db.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         return jsonify(error=f"A customer with phone {phone} already exists."), 409
     return jsonify(fetch_customer(db, cur.lastrowid)), 201
 
@@ -741,7 +745,7 @@ def customer_detail(cid):
         "SELECT p.category, SUM(s.total) AS spent FROM sales s JOIN products p ON p.id = s.product_id"
         " WHERE s.customer_id = ? GROUP BY p.category ORDER BY spent DESC", (cid,)).fetchall()
     days = db.execute(
-        "SELECT CAST(strftime('%w', created_at) AS INTEGER) AS dow, COUNT(*) AS visits FROM transactions"
+        "SELECT CAST(EXTRACT(DOW FROM created_at::timestamp) AS INTEGER) AS dow, COUNT(*) AS visits FROM transactions"
         " WHERE customer_id = ? GROUP BY dow ORDER BY visits DESC", (cid,)).fetchall()
     purchases = transaction_dicts(db, db.execute(
         TRANSACTION_QUERY + " WHERE t.customer_id = ? ORDER BY t.created_at DESC, t.id DESC LIMIT 50", (cid,)).fetchall())
@@ -785,7 +789,7 @@ def dashboard():
     total_products = db.execute("SELECT COUNT(*) FROM products").fetchone()[0]
     today = db.execute(
         "SELECT COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS count, COALESCE(SUM(items_count), 0) AS items"
-        " FROM transactions WHERE date(created_at) = date('now', 'localtime')"
+        " FROM transactions WHERE left(created_at, 10) = left(local_now(), 10)"
     ).fetchone()
     inv = db.execute(
         "SELECT COALESCE(SUM(quantity * buying_price), 0) AS cost_value,"
@@ -835,7 +839,7 @@ def build_inventory_context(db):
         r["product_id"]: r["qty"]
         for r in db.execute(
             "SELECT product_id, SUM(quantity) AS qty FROM sales"
-            " WHERE created_at >= datetime('now', 'localtime', '-7 days') GROUP BY product_id"
+            " WHERE created_at >= local_now('-7 days') GROUP BY product_id"
         ).fetchall()
     }
     lines = ["name | category | qty_in_stock | reorder_level | buying_KSh | selling_KSh | units_sold_last_7_days | LOW?"]

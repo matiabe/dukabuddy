@@ -1,12 +1,21 @@
 # DukaBuddy — AI Shop Assistant for Kenyan Dukas
 
-React + Vite + Tailwind frontend, Flask + SQLite backend, optional Claude AI.
+React + Vite + Tailwind frontend, Flask + PostgreSQL backend, optional Claude AI.
+
+## Requirements
+- Python 3.11+, Node.js 20+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (runs PostgreSQL) - or your own PostgreSQL 14+ server
 
 ## Quick start (Windows)
-Double-click `start.bat`, then open http://localhost:5173
+Start Docker Desktop, double-click `start.bat`, then open http://localhost:5173.
+It starts PostgreSQL in Docker, installs dependencies on first run and opens the app.
+Tables and sample data are created automatically on the first start.
 
 ## Manual start
 ```bash
+# Database (once; keeps running in the background)
+docker compose up -d                # PostgreSQL 17 on 127.0.0.1:5432
+
 # Backend (terminal 1)
 cd backend
 python -m venv venv
@@ -19,6 +28,17 @@ npm install
 npm run dev                         # http://localhost:5173
 ```
 
+## Database (PostgreSQL)
+- Connection is set by `DATABASE_URL` in `backend/.env`, e.g.
+  `postgresql://dukabuddy:<password>@127.0.0.1:5432/dukabuddy`
+- The Docker database password comes from `POSTGRES_PASSWORD` in the project-root `.env`
+  (not committed; defaults to `dukabuddy_dev`). Keep both values in sync.
+- Data lives in the Docker volume `dukabuddy_pgdata`, so it survives restarts.
+- Driver: `pg8000` (pure Python, works on any Python version).
+- **Coming from the old SQLite version?** Put your `dukabuddy.db` in `backend/` and run
+  `venv\Scripts\python migrate_sqlite_to_postgres.py --replace` to copy all data across.
+- Backup: `docker exec dukabuddy-db pg_dump -U dukabuddy dukabuddy > backup.sql`
+
 ## Enable Claude AI (optional)
 Put your key in `backend/.env` (never in the frontend):
 ```
@@ -28,7 +48,7 @@ ANTHROPIC_MODEL=claude-sonnet-5-5
 Restart the backend. Without a key, the assistant falls back to rule-based restock advice from the same data.
 
 ## Features
-- Dashboard: total products, today's sales, inventory value (at cost), low-stock count — all computed live from SQLite
+- Dashboard: total products, today's sales, inventory value (at cost), low-stock count — all computed live from PostgreSQL
 - Add/view/search products, restock received goods
 - New Sale (till): multi-item cart, loyalty points, payment method (Cash / M-Pesa / Card / Credit, recorded as a label), cash change, printable receipt. Stock deducted automatically; a sale either fully succeeds or nothing changes
 - Sales History: every receipt, filter by date range / payment / search (receipt no., customer, product), revenue, gross profit, average sale, daily revenue chart, top products
@@ -46,4 +66,4 @@ Restart the backend. Without a key, the assistant falls back to rule-based resto
 The scheduler runs only when the backend is started with `python app.py`.
 
 ## Reset demo data
-Stop the backend, delete `backend/dukabuddy.db`, start again. Sample products are re-seeded.
+**Deletes all shop data.** Stop the backend, run `docker compose down -v` then `docker compose up -d`, and start the backend again. Sample data is re-seeded.

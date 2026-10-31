@@ -1,0 +1,24 @@
+# PostgreSQL for DukaBuddy.  Start with:  docker compose up -d
+services:
+  db:
+    image: postgres:17
+    container_name: dukabuddy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dukabuddy
+      POSTGRES_USER: dukabuddy
+      # set POSTGRES_PASSWORD in the project-root .env (not committed); falls back to a dev default
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dukabuddy_dev}
+      TZ: Africa/Nairobi
+    ports:
+      - "127.0.0.1:5432:5432"   # only reachable from this computer
+    volumes:
+      - dukabuddy_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dukabuddy -d dukabuddy"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  dukabuddy_pgdata:

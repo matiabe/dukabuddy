@@ -34,22 +34,21 @@ SETTING_TYPES["owner_email"] = "str"
 
 
 def init_automation(db):
-    db.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS purchase_orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+    for stmt in [
+        "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        """CREATE TABLE IF NOT EXISTS purchase_orders (
+            id SERIAL PRIMARY KEY,
             product_id INTEGER NOT NULL REFERENCES products(id),
             quantity INTEGER NOT NULL CHECK (quantity > 0),
-            unit_cost REAL NOT NULL,
+            unit_cost DOUBLE PRECISION NOT NULL,
             status TEXT NOT NULL CHECK (status IN ('pending_review', 'ordered', 'received', 'cancelled')),
             source TEXT NOT NULL DEFAULT 'auto',
             reason TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS email_outbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT local_now(),
+            updated_at TEXT NOT NULL DEFAULT local_now()
+        )""",
+        """CREATE TABLE IF NOT EXISTS email_outbox (
+            id SERIAL PRIMARY KEY,
             kind TEXT NOT NULL,
             ref_key TEXT,
             to_addr TEXT,
@@ -58,18 +57,20 @@ def init_automation(db):
             attachments TEXT,
             status TEXT NOT NULL CHECK (status IN ('sent', 'logged', 'failed')),
             error TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        CREATE TABLE IF NOT EXISTS automation_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL DEFAULT local_now()
+        )""",
+        """CREATE TABLE IF NOT EXISTS automation_runs (
+            id SERIAL PRIMARY KEY,
             trigger TEXT NOT NULL,
             summary TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-        );
-        """
-    )
+            created_at TEXT NOT NULL DEFAULT local_now()
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_po_product_status ON purchase_orders (product_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_outbox_ref ON email_outbox (ref_key)",
+    ]:
+        db.execute(stmt)
     for k, v in DEFAULT_SETTINGS.items():
-        db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (k, v))
+        db.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING", (k, v))
     db.commit()
 
 
@@ -215,7 +216,7 @@ def open_order(db, product_id):
 def order_quantity(db, p):
     sold_14 = db.execute(
         "SELECT COALESCE(SUM(quantity), 0) FROM sales WHERE product_id = ?"
-        " AND created_at >= datetime('now', 'localtime', '-14 days')", (p["id"],)).fetchone()[0]
+        " AND created_at >= local_now('-14 days')", (p["id"],)).fetchone()[0]
     # cover ~2 weeks of demand, at least twice the reorder level
     return max(max(p["reorder_level"] * 2, sold_14) - p["quantity"], 1)
 
@@ -238,7 +239,7 @@ def receive_po(db, po):
     db.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (po["quantity"], po["product_id"]))
     db.execute("INSERT INTO restocks (product_id, quantity, unit_cost, total_cost) VALUES (?, ?, ?, ?)",
                (po["product_id"], po["quantity"], po["unit_cost"], po["quantity"] * po["unit_cost"]))
-    db.execute("UPDATE purchase_orders SET status = 'received', updated_at = datetime('now', 'localtime') WHERE id = ?",
+    db.execute("UPDATE purchase_orders SET status = 'received', updated_at = local_now() WHERE id = ?",
                (po["id"],))
 
 
@@ -276,13 +277,20 @@ def email_table(headers, rows):
     return f'<table style="border-collapse:collapse;width:100%">{th and "<tr>" + th + "</tr>"}{trs}</table>'
 
 
+def recently_failed(db, ref_key, hours=24):
+    """A failed send is retried by the scheduler at most once a day (not every run)."""
+    return db.execute(
+        "SELECT 1 FROM email_outbox WHERE ref_key = ? AND status = 'failed' AND created_at >= local_now(?)",
+        (ref_key, f"-{hours} hours")).fetchone() is not None
+
+
 def send_email(db, kind, subject, body_html, ref_key=None, attachments=None, dedupe_hours=None):
     """Send via SMTP if configured, else store in the outbox. Returns outbox row id, or None if deduped."""
     if ref_key and dedupe_hours is not None:
         dup = db.execute(
             "SELECT 1 FROM email_outbox WHERE ref_key = ? AND status IN ('sent', 'logged')"
-            " AND created_at >= datetime('now', 'localtime', ?)", (ref_key, f"-{dedupe_hours} hours")).fetchone()
-        if dup:
+            " AND created_at >= local_now(?)", (ref_key, f"-{dedupe_hours} hours")).fetchone()
+        if dup or recently_failed(db, ref_key):
             return None
     s = get_settings(db)
     to = s["owner_email"].strip()
@@ -388,7 +396,7 @@ def run_automation(db, trigger="scheduler"):
         last_month = (first - timedelta(days=1)).strftime("%Y-%m")
         already = db.execute("SELECT 1 FROM email_outbox WHERE ref_key = ? AND status IN ('sent', 'logged')",
                              (f"monthly:{last_month}",)).fetchone()
-        if not already:
+        if not already and not recently_failed(db, f"monthly:{last_month}"):
             send_monthly_report(db, last_month)
             summary["monthly_report"] = last_month
             summary["alerts"] += 1
@@ -529,7 +537,7 @@ def api_approve_po(po_id):
             if qty <= 0:
                 return "Quantity must be greater than zero."
             db.execute("UPDATE purchase_orders SET quantity = ? WHERE id = ?", (qty, po["id"]))
-        db.execute("UPDATE purchase_orders SET status = 'ordered', updated_at = datetime('now', 'localtime')"
+        db.execute("UPDATE purchase_orders SET status = 'ordered', updated_at = local_now()"
                    " WHERE id = ?", (po["id"],))
     return _po_action(po_id, ("pending_review",), fn)
 
@@ -542,7 +550,7 @@ def api_receive_po(po_id):
 @bp.post("/api/purchase-orders/<int:po_id>/cancel")
 def api_cancel_po(po_id):
     def fn(db, po):
-        db.execute("UPDATE purchase_orders SET status = 'cancelled', updated_at = datetime('now', 'localtime')"
+        db.execute("UPDATE purchase_orders SET status = 'cancelled', updated_at = local_now()"
                    " WHERE id = ?", (po["id"],))
     return _po_action(po_id, ("pending_review", "ordered"), fn)
 

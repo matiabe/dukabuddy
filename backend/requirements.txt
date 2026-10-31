@@ -1,5 +1,6 @@
 flask
 flask-cors
 python-dotenv
+pg8000
 openpyxl
 fpdf2
