@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import { api, isoDate, ksh, when } from '../api.js'
 import ReceiptModal from '../components/Receipt.jsx'
+import { useAuth } from '../auth.jsx'
 import { Alert, Button, Card, PageHeader, inputClass } from '../components/ui.jsx'
 
 const inlineInput = inputClass.replace('w-full', 'w-auto')
@@ -14,6 +15,7 @@ const RANGES = [
 ]
 
 export default function SalesHistory({ navigate }) {
+  const { isOwner } = useAuth()
   const [range, setRange] = useState('7d')
   const [from, setFrom] = useState(isoDate(-6))
   const [to, setTo] = useState('')
@@ -40,7 +42,7 @@ export default function SalesHistory({ navigate }) {
   const tiles = s && [
     ['Sales', s.count.toLocaleString(), `${s.items} items sold`],
     ['Revenue', ksh(s.revenue), s.discounts ? `after ${ksh(s.discounts)} points discounts` : 'net of discounts'],
-    ['Gross profit', ksh(s.profit), s.revenue ? `${Math.round((s.profit / s.revenue) * 100)}% margin` : '—'],
+    isOwner && ['Gross profit', ksh(s.profit), s.revenue ? `${Math.round((s.profit / s.revenue) * 100)}% margin` : '—'],
     ['Average sale', ksh(Math.round(s.avg_sale)), 'per receipt'],
     ['Loyalty sales', s.loyalty_sales, s.count ? `${Math.round((s.loyalty_sales / s.count) * 100)}% of receipts` : '—'],
   ]
@@ -85,7 +87,7 @@ export default function SalesHistory({ navigate }) {
       {data && (
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            {tiles.map(([label, value, sub]) => (
+            {tiles.filter(Boolean).map(([label, value, sub]) => (
               <Card key={label} className="p-4">
                 <p className="text-xs font-medium text-slate-500">{label}</p>
                 <p className="mt-1 text-xl font-bold text-slate-900">{value}</p>
@@ -142,7 +144,7 @@ export default function SalesHistory({ navigate }) {
                     <th className="px-5 py-3">Payment</th>
                     <th className="px-5 py-3 text-right">Discount</th>
                     <th className="px-5 py-3 text-right">Total</th>
-                    <th className="px-5 py-3 text-right">Profit</th>
+                    {isOwner && <th className="px-5 py-3 text-right">Profit</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -161,7 +163,7 @@ export default function SalesHistory({ navigate }) {
                       <td className="px-5 py-3 text-slate-500">{t.payment_method}</td>
                       <td className="px-5 py-3 text-right text-slate-500">{t.discount ? ksh(t.discount) : '—'}</td>
                       <td className="px-5 py-3 text-right font-semibold">{ksh(t.total)}</td>
-                      <td className="px-5 py-3 text-right text-slate-600">{ksh(t.profit)}</td>
+                      {isOwner && <td className="px-5 py-3 text-right text-slate-600">{ksh(t.profit)}</td>}
                     </tr>
                   ))}
                   {data.transactions.length === 0 && (

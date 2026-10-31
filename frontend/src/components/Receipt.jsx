@@ -1,16 +1,17 @@
 import { Printer, X } from 'lucide-react'
 import { ksh } from '../api.js'
+import { useAuth } from '../auth.jsx'
 import { Button } from './ui.jsx'
 
 export default function ReceiptModal({ tx, onClose, children }) {
+  const { shopName } = useAuth()
   if (!tx) return null
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="print-area p-6 font-mono text-sm text-slate-800">
           <div className="text-center">
-            <p className="text-lg font-bold">DukaBuddy</p>
-            <p className="text-xs text-slate-500">Mama Wanjiku's Duka · Nairobi</p>
+            <p className="text-lg font-bold">{shopName}</p>
             <p className="mt-2 text-xs">Receipt {tx.receipt_no}</p>
             <p className="text-xs text-slate-500">{tx.created_at}</p>
           </div>
@@ -31,6 +32,7 @@ export default function ReceiptModal({ tx, onClose, children }) {
           <Row label={`Paid (${tx.payment_method})`} value={ksh(tx.amount_paid)} />
           {tx.change_given > 0 && <Row label="Change" value={ksh(tx.change_given)} />}
           <p className="mt-2 text-xs text-slate-500">{tx.items_count} item(s)</p>
+          {tx.served_by && <p className="text-xs text-slate-500">Served by: {tx.served_by}</p>}
           {tx.customer_name && (
             <>
               <div className="my-3 border-t border-dashed border-slate-300" />

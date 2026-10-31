@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { FileSpreadsheet, Plus, Search, X } from 'lucide-react'
 import { api, ksh, when } from '../api.js'
 import { Alert, Button, Card, Field, PageHeader, StockBadge, inputClass } from '../components/ui.jsx'
+import ImportProducts from '../components/ImportProducts.jsx'
+import { useAuth } from '../auth.jsx'
 
 const EMPTY = { name: '', category: '', buying_price: '', selling_price: '', quantity: '', reorder_level: '' }
 
 export default function Products() {
+  const { isOwner } = useAuth()
   const [products, setProducts] = useState([])
   const [form, setForm] = useState(EMPTY)
   const [showForm, setShowForm] = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -58,11 +62,16 @@ export default function Products() {
       <PageHeader
         title="Products"
         subtitle={`${products.length} products in stock list`}
-        action={
-          <Button onClick={() => setShowForm(!showForm)}>
-            {showForm ? <><X size={16} /> Cancel</> : <><Plus size={16} /> Add product</>}
-          </Button>
-        }
+        action={isOwner && (
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => { setShowImport(!showImport); setShowForm(false) }}>
+              {showImport ? <><X size={16} /> Close import</> : <><FileSpreadsheet size={16} /> Import from Excel</>}
+            </Button>
+            <Button onClick={() => { setShowForm(!showForm); setShowImport(false) }}>
+              {showForm ? <><X size={16} /> Cancel</> : <><Plus size={16} /> Add product</>}
+            </Button>
+          </div>
+        )}
       />
 
       <div className="mb-4 space-y-2">
@@ -70,14 +79,18 @@ export default function Products() {
         <Alert type="success">{success}</Alert>
       </div>
 
+      {showImport && (
+        <ImportProducts onDone={(msg) => { setSuccess(msg); setError(''); setShowImport(false); load() }} />
+      )}
+
       {showForm && (
         <Card className="mb-6 p-5">
           <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Product name">
-              <input className={inputClass} value={form.name} onChange={set('name')} placeholder="e.g. Unga wa Ugali 2kg" required />
+              <input className={inputClass} value={form.name} onChange={set('name')} placeholder="e.g. Samsung Galaxy A15 128GB" required />
             </Field>
             <Field label="Category">
-              <input className={inputClass} value={form.category} onChange={set('category')} placeholder="e.g. Flour" />
+              <input className={inputClass} value={form.category} onChange={set('category')} placeholder="e.g. Phones" />
             </Field>
             <Field label="Buying price (KSh)">
               <input type="number" min="0" step="0.01" className={inputClass} value={form.buying_price} onChange={set('buying_price')} required />
@@ -111,7 +124,7 @@ export default function Products() {
               <tr>
                 <th className="px-5 py-3">Product</th>
                 <th className="px-5 py-3">Category</th>
-                <th className="px-5 py-3 text-right">Buying</th>
+                {isOwner && <th className="px-5 py-3 text-right">Buying</th>}
                 <th className="px-5 py-3 text-right">Selling</th>
                 <th className="px-5 py-3 text-right">Stock</th>
                 <th className="px-5 py-3 text-right">Reorder at</th>
@@ -127,7 +140,7 @@ export default function Products() {
                 <tr key={p.id} className={p.low_stock ? 'bg-amber-50/40' : ''}>
                   <td className="px-5 py-3 font-medium text-slate-800">{p.name}</td>
                   <td className="px-5 py-3 text-slate-500">{p.category}</td>
-                  <td className="px-5 py-3 text-right">{ksh(p.buying_price)}</td>
+                  {isOwner && <td className="px-5 py-3 text-right">{ksh(p.buying_price)}</td>}
                   <td className="px-5 py-3 text-right">{ksh(p.selling_price)}</td>
                   <td className="px-5 py-3 text-right font-semibold">{p.quantity}</td>
                   <td className="px-5 py-3 text-right text-slate-500">{p.reorder_level}</td>

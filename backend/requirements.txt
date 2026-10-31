@@ -1,5 +1,5 @@
 flask
-flask-cors
+gunicorn; sys_platform != "win32"
 python-dotenv
 pg8000
 openpyxl

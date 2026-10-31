@@ -1,4 +1,4 @@
-"""DukaBuddy reports: build report data once, render as PDF (fpdf2) or Excel (openpyxl)."""
+"""NyamsComm reports: build report data once, render as PDF (fpdf2) or Excel (openpyxl)."""
 import io
 import re
 from datetime import datetime, timedelta
@@ -199,10 +199,10 @@ def build_report(db, kind, start_date, end_date):
         groups.append({"name": REPORT_TYPES[k][0].replace(" Report", ""), "kpis": kpis, "sections": sections})
     if kind == "monthly":
         period_label = start_date.strftime("%B %Y")
-        fname = f"DukaBuddy_Monthly_Performance_Report_{start_date.strftime('%B_%Y')}"
+        fname = f"NyamsComm_Monthly_Performance_Report_{start_date.strftime('%B_%Y')}"
     else:
         period_label = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
-        fname = f"DukaBuddy_{title.replace(' & ', '_and_').replace(' ', '_')}_{start_date}_to_{end_date}"
+        fname = f"NyamsComm_{title.replace(' & ', '_and_').replace(' ', '_')}_{start_date}_to_{end_date}"
     return {
         "kind": kind, "title": title, "period": period_label, "filename": re.sub(r"[^A-Za-z0-9_\-]", "", fname),
         "shop": get_settings(db)["shop_name"], "generated": datetime.now().strftime("%d %b %Y, %H:%M"),
@@ -235,7 +235,7 @@ class ReportPDF(FPDF):
         self.rep = rep
         self.set_auto_page_break(True, margin=15)
         self.set_title(f"{rep['title']} - {rep['period']}")
-        self.set_author("DukaBuddy")
+        self.set_author("NyamsComm")
 
     def header(self):
         self.set_fill_color(5, 150, 105)
@@ -243,7 +243,7 @@ class ReportPDF(FPDF):
         self.set_text_color(255, 255, 255)
         self.set_xy(10, 4)
         self.set_font("Helvetica", "B", 13)
-        self.cell(0, 6, latin1(f"DukaBuddy  |  {self.rep['shop']}"))
+        self.cell(0, 6, latin1(self.rep["shop"]))
         self.set_xy(10, 10)
         self.set_font("Helvetica", "", 9)
         self.cell(0, 5, latin1(f"{self.rep['title']}  -  {self.rep['period']}"))
@@ -254,7 +254,7 @@ class ReportPDF(FPDF):
         self.set_y(-10)
         self.set_font("Helvetica", "", 8)
         self.set_text_color(148, 163, 184)
-        self.cell(0, 5, latin1(f"Generated {self.rep['generated']} by DukaBuddy"), align="L")
+        self.cell(0, 5, latin1(f"Generated {self.rep['generated']} by NyamsComm"), align="L")
         self.cell(0, 5, f"Page {self.page_no()} of {{nb}}", align="R")
 
 
@@ -333,7 +333,7 @@ def render_xlsx(rep):
     ws = wb.active
     ws.title = "Summary"
     title_font, head_fill = Font(bold=True, size=16, color="065F46"), PatternFill("solid", fgColor="1E293B")
-    ws["A1"], ws["A1"].font = f"DukaBuddy - {rep['title']}", title_font
+    ws["A1"], ws["A1"].font = f"NyamsComm - {rep['title']}", title_font
     ws["A2"] = rep["shop"]
     ws["A3"] = f"Period: {rep['period']}"
     ws["A4"] = f"Generated: {rep['generated']}"

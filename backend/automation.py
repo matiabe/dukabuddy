@@ -1,4 +1,4 @@
-"""DukaBuddy automation: product performance tracking, auto-restock purchase orders,
+"""NyamsComm automation: product performance tracking, auto-restock purchase orders,
 email alerts (SMTP or in-app outbox) and the background scheduler."""
 import html
 import logging
@@ -18,7 +18,7 @@ bp = Blueprint("automation", __name__)
 
 # ---------------------------------------------------------------- settings
 DEFAULT_SETTINGS = {
-    "shop_name": "Mama Wanjiku's Duka",
+    "shop_name": "NyamsComm Electronics",
     "owner_email": os.getenv("OWNER_EMAIL", ""),
     "auto_restock": "1",          # create purchase orders automatically for established products
     "new_product_days": "14",     # products younger than this need owner verification before restocking
@@ -262,10 +262,10 @@ def smtp_config():
 def email_layout(shop, title, inner):
     return f"""<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#1e293b">
       <div style="background:#059669;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0">
-        <b style="font-size:18px">DukaBuddy</b><br><span style="font-size:13px">{html.escape(shop)}</span></div>
+        <b style="font-size:18px">{html.escape(shop)}</b></div>
       <div style="border:1px solid #e2e8f0;border-top:0;padding:20px;border-radius:0 0 8px 8px">
         <h2 style="margin-top:0;font-size:18px">{html.escape(title)}</h2>{inner}
-        <p style="color:#94a3b8;font-size:12px;margin-top:24px">Sent automatically by DukaBuddy on
+        <p style="color:#94a3b8;font-size:12px;margin-top:24px">Sent automatically by NyamsComm on
         {now().strftime('%d %b %Y, %H:%M')}.</p></div></div>"""
 
 
@@ -298,8 +298,8 @@ def send_email(db, kind, subject, body_html, ref_key=None, attachments=None, ded
     status, error = "logged", None
     if cfg["configured"] and to:
         msg = EmailMessage()
-        msg["Subject"] = f"[DukaBuddy] {subject}"
-        msg["From"] = cfg["from"] or "dukabuddy@localhost"
+        msg["Subject"] = f"[NyamsComm] {subject}"
+        msg["From"] = cfg["from"] or "nyamscomm@localhost"
         msg["To"] = to
         msg.set_content("This email contains HTML. Please view it in an HTML-capable email client.")
         msg.add_alternative(body_html, subtype="html")
@@ -365,10 +365,10 @@ def run_automation(db, trigger="scheduler"):
                  "Ordered (auto)" if st == "ordered" else "Needs your review") for po, p, qty, st in created]
         total = sum(qty * p["buying_price"] for _, p, qty, _ in created)
         body = email_layout(shop, "Restock orders created", (
-            f"<p>{len(created)} product(s) reached their reorder level. DukaBuddy prepared these purchase orders "
+            f"<p>{len(created)} product(s) reached their reorder level. NyamsComm prepared these purchase orders "
             f"(estimated total <b>{ksh(total)}</b>):</p>"
             + email_table(["Order", "Product", "In stock", "Order qty", "Est. cost", "Status"], rows)
-            + "<p>Open <b>Auto Restock</b> in DukaBuddy to approve new-product orders and mark deliveries as received.</p>"))
+            + "<p>Open <b>Auto Restock</b> in NyamsComm to approve new-product orders and mark deliveries as received.</p>"))
         if send_email(db, "low_stock", f"{len(created)} restock order(s) created", body,
                       ref_key="po:" + ",".join(str(c[0]) for c in created)):
             summary["alerts"] += 1
@@ -590,7 +590,7 @@ def api_alert(aid):
 def api_test_email():
     db = get_db()
     s = get_settings(db)
-    body = email_layout(s["shop_name"], "Test email", "<p>If you can read this, DukaBuddy email alerts are working.</p>")
+    body = email_layout(s["shop_name"], "Test email", "<p>If you can read this, NyamsComm email alerts are working.</p>")
     aid = send_email(db, "test", "Test email", body)
     r = db.execute("SELECT status, error, to_addr FROM email_outbox WHERE id = ?", (aid,)).fetchone()
     return jsonify(dict(r))

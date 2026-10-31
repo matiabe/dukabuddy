@@ -1,4 +1,9 @@
-# PostgreSQL for DukaBuddy.  Start with:  docker compose up -d
+# NyamsComm: the whole shop system in Docker (database + backend + web app).
+#   Start / update:  docker compose up -d --build      (or double-click start.bat)
+#   Open:            http://localhost on this computer, http://<this computer's IP> from staff devices
+# Settings come from the project-root .env (see .env.example) and backend/.env (email, AI key).
+name: dukabuddy
+
 services:
   db:
     image: postgres:17
@@ -7,11 +12,10 @@ services:
     environment:
       POSTGRES_DB: dukabuddy
       POSTGRES_USER: dukabuddy
-      # set POSTGRES_PASSWORD in the project-root .env (not committed); falls back to a dev default
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dukabuddy_dev}
       TZ: Africa/Nairobi
     ports:
-      - "127.0.0.1:5432:5432"   # only reachable from this computer
+      - "127.0.0.1:5432:5432"   # this computer only (backups, local development) - never the shop network
     volumes:
       - dukabuddy_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,6 +23,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  backend:
+    build: ./backend
+    container_name: dukabuddy-backend
+    restart: unless-stopped
+    env_file:
+      - path: backend/.env      # optional: ANTHROPIC_API_KEY, SMTP_*, OWNER_EMAIL, AUTOMATION_INTERVAL_MINUTES
+        required: false
+    environment:
+      DATABASE_URL: postgresql://dukabuddy:${POSTGRES_PASSWORD:-dukabuddy_dev}@db:5432/dukabuddy
+      DEMO_DATA: ${DEMO_DATA:-0}  # 0 = real shop, starts empty; 1 = load sample electronics data
+      RUN_SCHEDULER: "1"
+      TZ: Africa/Nairobi
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    container_name: dukabuddy-web
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"     # reachable by staff devices on the shop Wi-Fi
+    depends_on:
+      - backend
 
 volumes:
   dukabuddy_pgdata:

@@ -1,43 +1,49 @@
-"""DukaBuddy backend - Flask + PostgreSQL."""
+"""NyamsComm backend (electronics dealer edition) - Flask + PostgreSQL."""
 import json
 import os
 import urllib.error
 import urllib.request
 
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from flask import Flask, Response, jsonify, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
+import auth
 import automation
+import product_import
 import reports
 from db import LOCAL_NOW_FUNCTION, IntegrityError, close_db, connect, get_db
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
 app = Flask(__name__)
-CORS(app)
+# Behind the nginx container: trust its X-Forwarded-For so login throttling sees the real device IP
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+# DEMO_DATA=0 (set in docker-compose.yml) starts a real shop with no sample products/customers/sales
+DEMO_DATA = os.getenv("DEMO_DATA", "1") != "0"
 
 SAMPLE_PRODUCTS = [
     # name, category, buying_price, selling_price, quantity, reorder_level
-    ("Unga wa Ugali (Jogoo) 2kg", "Flour", 165, 190, 40, 15),
-    ("Unga wa Ngano (Exe) 2kg", "Flour", 180, 210, 8, 10),
-    ("Sugar (Mumias) 1kg", "Sugar", 160, 185, 25, 12),
-    ("Cooking Oil (Elianto) 1L", "Cooking Oil", 290, 340, 5, 8),
-    ("Rice (Pishori) 1kg", "Grains", 190, 230, 30, 10),
-    ("Milk (Brookside) 500ml", "Dairy", 55, 65, 18, 20),
-    ("Bread (Supa Loaf) 400g", "Bakery", 55, 65, 12, 10),
-    ("Tea Leaves (Ketepa) 250g", "Beverages", 140, 170, 22, 8),
-    ("Royco Mchuzi Mix 200g", "Spices", 75, 95, 3, 6),
-    ("Omo Washing Powder 1kg", "Household", 280, 330, 14, 6),
-    ("Kasuku Bar Soap 800g", "Household", 135, 160, 20, 8),
-    ("Colgate Toothpaste 100ml", "Personal Care", 120, 150, 9, 5),
+    ("Samsung Galaxy A15 128GB", "Phones", 17500, 21000, 12, 4),
+    ("Tecno Spark 20 128GB", "Phones", 13000, 15500, 3, 4),
+    ("Infinix Hot 40i 128GB", "Phones", 12000, 14500, 10, 4),
+    ("iPhone 13 128GB", "Phones", 72000, 82000, 2, 2),
+    ("HP 250 G9 Laptop (Core i5, 8GB, 256GB SSD)", "Laptops", 52000, 60000, 5, 2),
+    ("Oraimo FreePods 4 Earbuds", "Audio", 2600, 3500, 18, 6),
+    ("JBL Flip 6 Bluetooth Speaker", "Audio", 11500, 14000, 6, 3),
+    ('Hisense 43" Smart TV', "TVs", 28000, 33500, 7, 2),
+    ("Samsung 25W Fast Charger", "Accessories", 1500, 2200, 4, 8),
+    ("Anker USB-C Cable 1.8m", "Accessories", 550, 900, 40, 15),
+    ("Oraimo 20000mAh Power Bank", "Accessories", 2300, 3200, 15, 6),
+    ("Tempered Glass Screen Protector", "Accessories", 120, 400, 60, 20),
     ("Safaricom Airtime KSh 100", "Airtime", 95, 100, 50, 20),
-    ("Eggs (Tray of 30)", "Dairy", 420, 480, 4, 5),
-    ("Soda (Coca-Cola) 500ml", "Beverages", 55, 70, 36, 24),
-    ("Matches (Box of 10)", "Household", 40, 50, 15, 5),
+    ("SanDisk 64GB microSD Card", "Storage", 750, 1200, 3, 6),
+    ("Phone Back Cover (assorted)", "Accessories", 200, 500, 45, 15),
+    ("Sony PlayStation 5 Slim", "Gaming", 68000, 78000, 2, 1),
 ]
 
 
 app.teardown_appcontext(close_db)
+app.register_blueprint(auth.bp)
 app.register_blueprint(automation.bp)
 app.register_blueprint(reports.bp)
 
@@ -121,7 +127,8 @@ def init_db():
     try:
         for stmt in SCHEMA:
             db.execute(stmt)
-        if db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
+        fresh = db.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+        if fresh and DEMO_DATA:
             db.executemany(
                 "INSERT INTO products (name, category, buying_price, selling_price, quantity, reorder_level)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
@@ -129,17 +136,19 @@ def init_db():
             )
             # A few sample sales so the demo dashboard isn't empty (stock already reflects them)
             ids = {r["name"]: r["id"] for r in db.execute("SELECT id, name FROM products")}
-            for idx, qty in [(1, 3), (3, 2), (6, 4), (15, 6), (7, 2), (13, 5)]:
+            for idx, qty in [(1, 2), (3, 1), (6, 3), (15, 4), (7, 1), (13, 5)]:
                 pid = ids[SAMPLE_PRODUCTS[idx - 1][0]]
                 price = db.execute("SELECT selling_price FROM products WHERE id = ?", (pid,)).fetchone()[0]
                 db.execute(
                     "INSERT INTO sales (product_id, quantity, unit_price, total) VALUES (?, ?, ?, ?)",
                     (pid, qty, price, price * qty),
                 )
-        if db.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
-            seed_customers(db)
+            if db.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0:
+                seed_customers(db)
         automation.init_automation(db)
-        seed_automation_demo(db)
+        if fresh and DEMO_DATA:
+            seed_automation_demo(db)
+        auth.init_auth(app, db)
         backfill_transactions(db)
         db.commit()
     finally:
@@ -156,9 +165,9 @@ def seed_automation_demo(db):
         f"UPDATE products SET created_at = local_now('-60 days') WHERE name IN ({','.join('?' * len(names))})"
         " AND created_at > local_now('-60 days')", names)
     new_products = [  # name, category, buy, sell, qty, reorder, days ago, [(days ago, qty) sales]
-        ("Del Monte Juice 1L", "Beverages", 210, 260, 4, 5, 6, [(5, 3), (3, 2), (2, 3), (1, 2)]),
-        ("Ariel Detergent 500g", "Household", 150, 185, 15, 5, 10, []),
-        ("Mala Fermented Milk 500ml", "Dairy", 60, 75, 12, 6, 1, []),
+        ("Redmi Note 13 256GB", "Phones", 21000, 25500, 3, 3, 6, [(5, 1), (3, 1), (2, 2), (1, 1)]),
+        ("Oraimo Watch 4 Plus Smartwatch", "Wearables", 3800, 5200, 10, 3, 10, []),
+        ("TP-Link 4G LTE Router", "Networking", 6500, 8500, 4, 2, 1, []),
     ]
     for name, cat, buy, sell, qty, reorder, age, sales in new_products:
         if db.execute("SELECT 1 FROM products WHERE name = ?", (name,)).fetchone():
@@ -193,8 +202,8 @@ def backfill_transactions(db):
 POINTS_PER_KSH = 100  # earn 1 point for every KSh 100 spent (x tier multiplier)
 POINT_VALUE_KSH = 1  # 1 point = KSh 1 discount when redeemed
 TIERS = [  # (name, minimum total spend in KSh, points multiplier) - highest first
-    ("Gold", 20000, 2.0),
-    ("Silver", 5000, 1.5),
+    ("Gold", 150000, 2.0),
+    ("Silver", 40000, 1.5),
     ("Bronze", 0, 1.0),
 ]
 AT_RISK_DAYS = 21  # regular customer who hasn't visited in this many days
@@ -229,11 +238,11 @@ def seed_customers(db):
 
     rng = random.Random(7)
     people = [  # name, phone, visits, favourite product ids
-        ("Wanjiru Kamau", "0712345678", 22, [1, 3, 6, 7]),
-        ("Brian Otieno", "0723456789", 14, [15, 13, 7]),
-        ("Achieng Atieno", "0734567890", 9, [4, 10, 2, 14]),
-        ("Kiprotich Kemboi", "0745678901", 6, [5, 8, 3]),
-        ("Fatuma Hassan", "0756789012", 4, [12, 11, 16]),
+        ("Wanjiru Kamau", "0712345678", 22, [10, 12, 13, 15, 6]),
+        ("Brian Otieno", "0723456789", 14, [15, 13, 9, 11]),
+        ("Achieng Atieno", "0734567890", 9, [1, 10, 14, 7]),
+        ("Kiprotich Kemboi", "0745678901", 6, [5, 8, 12]),
+        ("Fatuma Hassan", "0756789012", 4, [16, 3, 12]),
         ("Mutua Musyoka", "0767890123", 3, [13, 15]),
     ]
     prices = {r[0]: r[1] for r in db.execute("SELECT id, selling_price FROM products")}
@@ -247,7 +256,7 @@ def seed_customers(db):
         spent, points = 0, 0
         for d in days:
             pid = rng.choice(favs)
-            qty = rng.randint(1, 4)
+            qty = 1 if prices[pid] >= 10000 else rng.randint(1, 3)  # big-ticket items sell one at a time
             total = prices[pid] * qty
             earned = points_for(total, spent)
             ts = (now - timedelta(days=d, hours=rng.randint(0, 9))).strftime("%Y-%m-%d %H:%M:%S")
@@ -347,6 +356,35 @@ def add_product():
     except IntegrityError:
         return jsonify(error=f"A product named '{name}' already exists."), 409
     return jsonify(fetch_product(db, cur.lastrowid)), 201
+
+
+@app.post("/api/products/import")
+def import_products():
+    """Upload an Excel/CSV product list. ?commit=1 saves it; otherwise it's a preview."""
+    f = request.files.get("file")
+    if f is None or not f.filename:
+        return jsonify(error="Choose an Excel (.xlsx) or CSV file to import."), 400
+    data = f.read(10 * 1024 * 1024 + 1)
+    if len(data) > 10 * 1024 * 1024:
+        return jsonify(error="File is too large (max 10 MB)."), 400
+    try:
+        columns, items, errors = product_import.parse(f.filename, data)
+    except product_import.ProductFileError as e:
+        return jsonify(error=str(e)), 400
+    commit = request.args.get("commit") == "1"
+    if commit and not items:
+        return jsonify(error="No valid products to import."), 400
+    created, updated, unchanged = product_import.apply(get_db(), items, commit)
+    return jsonify(committed=commit, columns=columns, created=created, updated=updated,
+                   unchanged=unchanged, errors=errors)
+
+
+@app.get("/api/products/import/template")
+def import_template():
+    return Response(
+        product_import.template_xlsx(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=NyamsComm_Products_Template.xlsx"})
 
 
 @app.post("/api/products/<int:pid>/restock")
@@ -505,10 +543,11 @@ def receipt_no(tid):
 
 
 TRANSACTION_QUERY = """
-    SELECT t.*, c.name AS customer_name, c.phone AS customer_phone,
+    SELECT t.*, c.name AS customer_name, c.phone AS customer_phone, u.name AS served_by,
         (SELECT COALESCE(SUM(s.total - COALESCE(s.unit_cost, 0) * s.quantity), 0) FROM sales s
          WHERE s.transaction_id = t.id) AS profit
     FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id
+    LEFT JOIN users u ON u.id = t.user_id
 """
 
 
@@ -546,6 +585,8 @@ def run_checkout(data):
         redeem = int(data.get("redeem_points") or 0)
         tid = checkout(db, data.get("items") or [], customer_id, redeem,
                        data.get("payment_method") or "Cash", data.get("amount_paid"))
+        db.execute("UPDATE transactions SET user_id = ? WHERE id = ?", (auth.current_user()["id"], tid))
+        db.commit()
     except SaleError as e:
         return jsonify(error=str(e)), e.status
     except (TypeError, ValueError):
@@ -913,14 +954,16 @@ def assistant():
         )
 
     system = (
-        "You are DukaBuddy, a friendly, practical assistant for a small retail shop (duka) in Kenya. "
+        "You are the NyamsComm assistant, a friendly, practical helper for NyamsComm Electronics, an electronics dealer shop in Kenya "
+        "(phones, laptops, TVs, audio, accessories). "
         "Use ONLY the inventory data provided. All money is in Kenyan Shillings (KSh). "
         "Be concise: use short bullet points, bold product names, give specific order quantities "
         "and estimated restock cost (quantity x buying price). Prioritise items at or below reorder level "
-        "and fast sellers. If asked about customers, suggest who to reward with bonus points and who to win back "
+        "and fast sellers. Expensive items (phones, laptops, TVs) tie up a lot of cash, so recommend small, "
+        "careful orders for them and point out cheap fast-moving accessories worth bundling. If asked about customers, suggest who to reward with bonus points and who to win back "
         "(at-risk customers). Keep answers under 250 words."
     )
-    user_msg = f"Current shop inventory:\n{context}\n\nShopkeeper's question: {question}"
+    user_msg = f"Current shop inventory:\n{context}\n\nShop owner's question: {question}"
     try:
         answer = call_claude(api_key, system, user_msg)
         return jsonify(answer=answer, source="claude")
@@ -941,6 +984,11 @@ def health():
 
 init_db()
 reports.all_customers = all_customers
+if os.getenv("RUN_SCHEDULER") == "1":  # set in docker-compose.yml (gunicorn runs a single worker)
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    automation.start_scheduler()
 
 if __name__ == "__main__":
     import logging

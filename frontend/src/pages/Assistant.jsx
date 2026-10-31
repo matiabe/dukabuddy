@@ -33,7 +33,7 @@ function Markdown({ text }) {
 
 export default function Assistant() {
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: "Habari! I'm DukaBuddy. I analyse your actual stock and sales data. Ask me what to restock." },
+    { role: 'assistant', text: "Habari! I'm the NyamsComm assistant. I analyse your phones, electronics and accessories stock and sales. Ask me what to restock." },
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -73,7 +73,7 @@ export default function Assistant() {
               </div>
             </div>
           ))}
-          {loading && <p className="pl-11 text-sm text-slate-400">DukaBuddy is analysing your stock…</p>}
+          {loading && <p className="pl-11 text-sm text-slate-400">Analysing your stock…</p>}
         </div>
 
         <div className="border-t border-slate-100 p-4">

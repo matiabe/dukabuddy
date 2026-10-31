@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Gift, Plus, Search, X } from 'lucide-react'
 import { api, ksh, when } from '../api.js'
+import { useAuth } from '../auth.jsx'
 import { Alert, Button, Card, Field, PageHeader, StatusBadge, TierBadge, inputClass } from '../components/ui.jsx'
 
 export default function Customers() {
@@ -139,6 +140,7 @@ export default function Customers() {
 
 function CustomerDetail({ id, onBack }) {
   const [data, setData] = useState(null)
+  const { isOwner } = useAuth()
   const [bonus, setBonus] = useState({ points: '', reason: 'Loyalty bonus' })
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -211,7 +213,7 @@ function CustomerDetail({ id, onBack }) {
       )}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
-        <Card className="p-5">
+        {isOwner && <Card className="p-5">
           <h2 className="mb-3 flex items-center gap-2 font-semibold text-slate-900"><Gift size={18} className="text-emerald-600" /> Award bonus points</h2>
           <form onSubmit={award} className="space-y-3">
             <Field label="Points">
@@ -231,7 +233,7 @@ function CustomerDetail({ id, onBack }) {
             <Alert type="success">{success}</Alert>
             <Button type="submit" className="w-full"><Gift size={16} /> Award points</Button>
           </form>
-        </Card>
+        </Card>}
 
         <Card className="p-5">
           <h2 className="mb-3 font-semibold text-slate-900">Favourite products</h2>

@@ -1,4 +1,4 @@
-"""PostgreSQL access for DukaBuddy (used by app.py, automation.py and reports.py).
+"""PostgreSQL access for NyamsComm (used by app.py, automation.py and reports.py).
 
 A thin wrapper over the pure-Python pg8000 driver so the rest of the code can:
   * use `?` placeholders,
@@ -26,7 +26,7 @@ DATABASE_URL = (os.getenv("DUKABUDDY_TEST_DATABASE_URL") or
 
 # Tables with a SERIAL `id` column: INSERTs into these get `RETURNING id` added automatically
 ID_TABLES = {"products", "sales", "restocks", "customers", "loyalty_points", "transactions",
-             "purchase_orders", "email_outbox", "automation_runs"}
+             "purchase_orders", "email_outbox", "automation_runs", "users"}
 INSERT_RE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
 

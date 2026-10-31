@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Mail, Save, Send, X } from 'lucide-react'
 import { api, when } from '../api.js'
+import { useAuth } from '../auth.jsx'
 import { Alert, Button, Card, Field, PageHeader, inputClass } from '../components/ui.jsx'
 
 const KIND_LABELS = {
@@ -16,6 +17,7 @@ const STATUS_STYLES = {
 }
 
 export default function Alerts() {
+  const { refresh } = useAuth()
   const [settings, setSettings] = useState(null)
   const [smtp, setSmtp] = useState(null)
   const [interval, setIntervalMin] = useState(60)
@@ -41,6 +43,7 @@ export default function Alerts() {
     try {
       const d = await api.saveSettings(settings)
       setSettings(d.settings)
+      refresh()
       setSuccess('Settings saved.')
     } catch (err) {
       setError(err.message)
@@ -147,7 +150,7 @@ SMTP_FROM=you@gmail.com`}</pre>
       <Card className="mt-6">
         <div className="border-b border-slate-100 px-5 py-4">
           <h2 className="font-semibold text-slate-900">Alert outbox</h2>
-          <p className="text-xs text-slate-400">Every alert and report DukaBuddy has sent or tried to send. Click to preview.</p>
+          <p className="text-xs text-slate-400">Every alert and report NyamsComm has sent or tried to send. Click to preview.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">

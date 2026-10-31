@@ -1,4 +1,4 @@
-"""One-time copy of an existing DukaBuddy SQLite database (dukabuddy.db) into PostgreSQL.
+"""One-time copy of an existing NyamsComm SQLite database (dukabuddy.db) into PostgreSQL.
 
 Usage (from the backend folder, with PostgreSQL running and DATABASE_URL set in .env):
     venv\\Scripts\\python migrate_sqlite_to_postgres.py --replace

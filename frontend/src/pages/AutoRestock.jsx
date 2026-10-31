@@ -84,7 +84,7 @@ export default function AutoRestock({ navigate }) {
     <>
       <PageHeader
         title="Auto Restock"
-        subtitle="DukaBuddy checks stock automatically and prepares purchase orders. You receive deliveries here."
+        subtitle="NyamsComm checks stock automatically and prepares purchase orders. You receive deliveries here."
         action={<Button onClick={runNow} disabled={busy}><Play size={16} /> Run checks now</Button>}
       />
       <div className="mb-4 space-y-2">

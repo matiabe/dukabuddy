@@ -4,15 +4,37 @@ async function request(path, options = {}) {
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
+  return handle(res)
+}
+
+// A 401 means the session ended (logged out, password changed, account switched off): go back to the login screen
+async function handle(res) {
   const data = await res.json().catch(() => ({}))
+  if (res.status === 401 && data.login_required) window.dispatchEvent(new Event('dukabuddy:logged-out'))
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
   return data
 }
 
+async function upload(path, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return handle(await fetch(`/api${path}`, { method: 'POST', body: form }))
+}
+
 export const api = {
+  me: () => request('/auth/me'),
+  login: (username, password) => request('/auth/login', { method: 'POST', body: { username, password } }),
+  setup: (owner) => request('/auth/setup', { method: 'POST', body: owner }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+  changePassword: (current_password, new_password) =>
+    request('/auth/password', { method: 'POST', body: { current_password, new_password } }),
+  users: () => request('/users'),
+  addUser: (u) => request('/users', { method: 'POST', body: u }),
+  updateUser: (id, u) => request(`/users/${id}`, { method: 'PUT', body: u }),
   dashboard: () => request('/dashboard'),
   products: () => request('/products'),
   addProduct: (p) => request('/products', { method: 'POST', body: p }),
+  importProducts: (file, commit) => upload(`/products/import${commit ? '?commit=1' : ''}`, file),
   restock: (id, quantity, unit_cost) =>
     request(`/products/${id}/restock`, { method: 'POST', body: { quantity, unit_cost } }),
   restocks: () => request('/restocks'),

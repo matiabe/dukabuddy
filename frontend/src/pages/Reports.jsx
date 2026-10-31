@@ -109,13 +109,13 @@ export default function Reports() {
               <FileSpreadsheet size={16} /> Download Excel
             </a>
           </div>
-          <p className="mt-2 text-xs text-slate-400">Files are named like <code>DukaBuddy_Sales_Report_2026-10-01_to_2026-10-31.pdf</code></p>
+          <p className="mt-2 text-xs text-slate-400">Files are named like <code>NyamsComm_Sales_Report_2026-10-01_to_2026-10-31.pdf</code></p>
         </Card>
 
         <Card className="p-5">
           <h2 className="flex items-center gap-2 font-semibold text-slate-900"><Mail size={18} className="text-emerald-600" /> Monthly email report</h2>
           <p className="mt-1 text-sm text-slate-500">
-            On the 1st of each month DukaBuddy emails last month's full performance report (PDF + Excel) to the owner.
+            On the 1st of each month NyamsComm emails last month's full performance report (PDF + Excel) to the owner.
           </p>
           <div className="mt-4 flex items-end gap-2">
             <Field label="Month">
