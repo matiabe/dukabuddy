@@ -129,14 +129,19 @@ def _start_session(u):
     get_db().commit()
 
 
-# ---------------- login throttling (per client IP, in memory) ----------------
+# ---------------- login throttling (per username + client IP, in memory) ----------------
+# Docker Desktop on Windows shows every device with the same address, so counting per IP alone would let one
+# person's typos lock out the whole shop. Counting per username keeps a lockout to the account being guessed.
 _failures = {}
 MAX_FAILURES, LOCK_SECONDS = 5, 300
 
 
-def _locked(ip):
-    recent = [t for t in _failures.get(ip, []) if time.time() - t < LOCK_SECONDS]
-    _failures[ip] = recent
+def _locked(key):
+    recent = [t for t in _failures.get(key, []) if time.time() - t < LOCK_SECONDS]
+    if recent:
+        _failures[key] = recent
+    else:
+        _failures.pop(key, None)
     return len(recent) >= MAX_FAILURES
 
 
@@ -189,18 +194,18 @@ def setup():
 
 @bp.post("/api/auth/login")
 def login():
-    ip = request.remote_addr or "?"
-    if _locked(ip):
-        return jsonify(error="Too many wrong attempts. Wait 5 minutes and try again."), 429
     data = request.get_json(silent=True) or {}
     username = str(data.get("username") or "").strip().lower()
+    key = f"{request.remote_addr or '?'}|{username}"
+    if _locked(key):
+        return jsonify(error="Too many wrong passwords for this username. Wait 5 minutes and try again."), 429
     row = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if row is None or not check_password_hash(row["password_hash"], str(data.get("password") or "")):
-        _failures.setdefault(ip, []).append(time.time())
+        _failures.setdefault(key, []).append(time.time())
         return jsonify(error="Wrong username or password."), 401
     if not row["active"]:
         return jsonify(error="This account has been switched off. Ask the owner."), 403
-    _failures.pop(ip, None)
+    _failures.pop(key, None)
     _start_session(dict(row))
     return jsonify(user=public_user(row))
 

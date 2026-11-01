@@ -55,7 +55,7 @@ docker compose down               # stop NyamsComm (data is kept)
 **`reset-database.bat`** deletes ALL data (asks you to type DELETE first) for a completely fresh start.
 
 ## Logins and roles
-Everyone logs in with their own username and password. Sessions last 12 hours. After 5 wrong passwords from a device it must wait 5 minutes.
+Everyone logs in with their own username and password. Sessions last 12 hours. After 5 wrong passwords for a username, that username must wait 5 minutes (other staff are not affected).
 
 | | Owner | Staff |
 |---|---|---|
