@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { KeyRound, Plus, X } from 'lucide-react'
+import { KeyRound, Phone, Plus, X } from 'lucide-react'
 import { api, when } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { Alert, Button, Card, Field, PageHeader, inputClass } from '../components/ui.jsx'
 
-const EMPTY = { name: '', username: '', password: '', role: 'staff' }
+const EMPTY = { name: '', username: '', password: '', role: 'staff', phone: '' }
 const ROLE_INFO = {
   staff: 'New Sale, Sales History, Products, Customers, receiving stock. No buying prices, profits, reports or settings.',
   owner: 'Everything, including profits, reports, prices, product import, settings and staff accounts.',
@@ -53,6 +53,11 @@ export default function Users() {
     run(() => api.updateUser(u.id, { active: !u.active }), `${u.name}'s account is now ${u.active ? 'off' : 'on'}.`)
   }
 
+  const editPhone = (u) => {
+    const phone = window.prompt(`Phone number for ${u.name} (gets SMS alerts). Leave empty to stop SMS:`, u.phone || '')
+    if (phone !== null) run(() => api.updateUser(u.id, { phone }), phone.trim() ? `${u.name} will get SMS alerts.` : `${u.name} will no longer get SMS alerts.`)
+  }
+
   const changeRole = (u, role) => run(() => api.updateUser(u.id, { role }), `${u.name} is now ${role === 'owner' ? 'an owner' : 'staff'}.`)
 
   return (
@@ -89,6 +94,9 @@ export default function Users() {
                 <option value="owner">Owner</option>
               </select>
             </Field>
+            <Field label="Phone (for SMS alerts, optional)">
+              <input type="tel" className={inputClass} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="e.g. 0712 345 678" />
+            </Field>
             <p className="text-xs text-slate-500 sm:col-span-2">{ROLE_INFO[form.role]}</p>
             <div className="sm:col-span-2"><Button type="submit">Create account</Button></div>
           </form>
@@ -103,6 +111,7 @@ export default function Users() {
                 <th className="px-5 py-3">Name</th>
                 <th className="px-5 py-3">Username</th>
                 <th className="px-5 py-3">Role</th>
+                <th className="px-5 py-3">Phone (SMS)</th>
                 <th className="px-5 py-3">Last login</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3"></th>
@@ -118,6 +127,12 @@ export default function Users() {
                       <option value="staff">Staff</option>
                       <option value="owner">Owner</option>
                     </select>
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-3">
+                    <button onClick={() => editPhone(u)} className="inline-flex items-center gap-1 text-sm hover:underline">
+                      <Phone size={14} className="text-emerald-600" />
+                      {u.phone ? <span className="font-mono text-xs text-slate-700">{u.phone}</span> : <span className="text-slate-400">Add number</span>}
+                    </button>
                   </td>
                   <td className="whitespace-nowrap px-5 py-3 text-slate-500">{when(u.last_login_at)}</td>
                   <td className="px-5 py-3">

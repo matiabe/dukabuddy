@@ -11,6 +11,7 @@ import auth
 import automation
 import product_import
 import reports
+import sms
 from db import LOCAL_NOW_FUNCTION, IntegrityError, close_db, connect, get_db
 
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
@@ -45,6 +46,7 @@ SAMPLE_PRODUCTS = [
 app.teardown_appcontext(close_db)
 app.register_blueprint(auth.bp)
 app.register_blueprint(automation.bp)
+app.register_blueprint(sms.bp)
 app.register_blueprint(reports.bp)
 
 
@@ -149,6 +151,7 @@ def init_db():
         if fresh and DEMO_DATA:
             seed_automation_demo(db)
         auth.init_auth(app, db)
+        sms.init_sms(db)  # after users exist: adds users.phone
         backfill_transactions(db)
         db.commit()
     finally:
@@ -591,6 +594,7 @@ def run_checkout(data):
         return jsonify(error=str(e)), e.status
     except (TypeError, ValueError):
         return jsonify(error="Invalid sale details."), 400
+    sms.in_background(sms.notify_sale, tid)  # SMS boss & staff without slowing the till
     tx = fetch_transaction(db, tid)
     products = [fetch_product(db, it["product_id"]) for it in tx["items"]]
     return jsonify(
@@ -989,6 +993,7 @@ if os.getenv("RUN_SCHEDULER") == "1":  # set in docker-compose.yml (gunicorn run
 
     logging.basicConfig(level=logging.INFO)
     automation.start_scheduler()
+    sms.start_summary_timer()
 
 if __name__ == "__main__":
     import logging
@@ -997,4 +1002,5 @@ if __name__ == "__main__":
     # With the debug reloader, only the child process (WERKZEUG_RUN_MAIN) should run background jobs
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         automation.start_scheduler()
+        sms.start_summary_timer()
     app.run(host="127.0.0.1", port=5000, debug=True)

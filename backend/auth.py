@@ -118,7 +118,7 @@ def scrub_costs(response):
 
 
 def public_user(u):
-    return {k: u[k] for k in ("id", "username", "name", "role", "active", "last_login_at", "created_at")}
+    return {k: u[k] for k in ("id", "username", "name", "role", "phone", "active", "last_login_at", "created_at")}
 
 
 def _start_session(u):
@@ -158,7 +158,13 @@ def _validate(data, require_password=True):
         return None, f"Password must be at least {MIN_PASSWORD} characters."
     if role not in ROLES:
         return None, "Role must be owner or staff."
-    return {"name": name, "username": username, "password": password, "role": role}, None
+    phone = str(data.get("phone") or "").strip()
+    if phone:
+        from sms import normalize_phone  # local import keeps auth free of the SMS module at load time
+        phone = normalize_phone(phone)
+        if not phone:
+            return None, "Phone: enter a Kenyan mobile number, e.g. 0712 345 678."
+    return {"name": name, "username": username, "password": password, "role": role, "phone": phone or None}, None
 
 
 def _shop_name(db):
@@ -246,9 +252,9 @@ def add_user():
         return jsonify(error=err), 400
     db = get_db()
     try:
-        uid = db.execute("INSERT INTO users (username, name, password_hash, role) VALUES (?, ?, ?, ?)",
+        uid = db.execute("INSERT INTO users (username, name, password_hash, role, phone) VALUES (?, ?, ?, ?, ?)",
                          (data["username"], data["name"], generate_password_hash(data["password"]),
-                          data["role"])).lastrowid
+                          data["role"], data["phone"])).lastrowid
         db.commit()
     except IntegrityError:
         return jsonify(error=f"Username '{data['username']}' is already taken."), 409
@@ -264,7 +270,8 @@ def update_user(uid):
         return jsonify(error="User not found."), 404
     body = request.get_json(silent=True) or {}
     data, err = _validate({"name": body.get("name", row["name"]), "username": row["username"],
-                           "password": body.get("password") or "", "role": body.get("role", row["role"])},
+                           "password": body.get("password") or "", "role": body.get("role", row["role"]),
+                           "phone": body.get("phone", row["phone"])},
                           require_password=False)
     if err:
         return jsonify(error=err), 400
@@ -276,9 +283,9 @@ def update_user(uid):
     # changing role/password or switching off logs the person out of every device
     bump = data["password"] or data["role"] != row["role"] or not active
     db.execute(
-        "UPDATE users SET name = ?, role = ?, active = ?, session_version = session_version + ?"
+        "UPDATE users SET name = ?, role = ?, phone = ?, active = ?, session_version = session_version + ?"
         + (", password_hash = ?" if data["password"] else "") + " WHERE id = ?",
-        (data["name"], data["role"], active, 1 if bump else 0)
+        (data["name"], data["role"], data["phone"], active, 1 if bump else 0)
         + ((generate_password_hash(data["password"]),) if data["password"] else ()) + (uid,))
     db.commit()
     return jsonify(public_user(db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()))

@@ -28,6 +28,10 @@ DEFAULT_SETTINGS = {
     "alert_low_stock": "1",
     "alert_dead_stock": "1",
     "monthly_report": "1",
+    "sms_sales": "1",             # SMS everyone with a phone number on every sale
+    "sms_low_stock": "1",         # SMS when a sale takes a product down to its reorder level
+    "sms_daily_summary": "1",     # evening SMS summary of the day
+    "sms_summary_hour": "20",     # hour (0-23) the daily summary goes out
 }
 SETTING_TYPES = {k: ("bool" if v in ("0", "1") else "int" if v.isdigit() else "str") for k, v in DEFAULT_SETTINGS.items()}
 SETTING_TYPES["owner_email"] = "str"
@@ -464,7 +468,7 @@ def api_put_settings():
             v = "1" if v in (True, "1", 1, "true") else "0"
         elif t == "int":
             try:
-                v = str(max(1, min(int(v), 3650)))
+                v = str(max(0, min(int(v), 23))) if k == "sms_summary_hour" else str(max(1, min(int(v), 3650)))
             except (TypeError, ValueError):
                 return jsonify(error=f"{k.replace('_', ' ')} must be a number."), 400
         else:
