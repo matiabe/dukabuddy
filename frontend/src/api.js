@@ -32,6 +32,7 @@ export const api = {
   addUser: (u) => request('/users', { method: 'POST', body: u }),
   updateUser: (id, u) => request(`/users/${id}`, { method: 'PUT', body: u }),
   dashboard: () => request('/dashboard'),
+  overview: (from, to) => request(`/overview?from=${from}&to=${to}`),
   products: () => request('/products'),
   addProduct: (p) => request('/products', { method: 'POST', body: p }),
   importProducts: (file, commit) => upload(`/products/import${commit ? '?commit=1' : ''}`, file),
@@ -45,6 +46,8 @@ export const api = {
     return request(`/transactions${qs ? `?${qs}` : ''}`)
   },
   transaction: (id) => request(`/transactions/${id}`),
+  removeSale: (id, reason) => request(`/transactions/${id}`, { method: 'DELETE', body: { reason } }),
+  removedSales: () => request('/transactions/removed'),
   customers: () => request('/customers'),
   customer: (id) => request(`/customers/${id}`),
   addCustomer: (c) => request('/customers', { method: 'POST', body: c }),

@@ -2,7 +2,11 @@
 
 The header row is detected automatically (within the first 15 rows) and columns are matched by
 name, so files like "Product Name | Brand | Category | Cost Price (KSh) | Retail Price | Qty | Min Stock"
-work without editing. Required columns: product name, buying price, selling price, quantity.
+work without editing. Required columns: product name, selling price, quantity.
+
+The buying price column is optional (a sheet can carry selling prices only). When a row has no buying
+price, an existing product keeps the buying price it already has and a new product is saved with a
+buying price of 0, to be filled in later on the Products page.
 
 Existing products (same name, case-insensitive) are updated: category, prices and reorder level are
 overwritten and the quantity is set to the file's quantity (the file is treated as a stock count).
@@ -28,9 +32,9 @@ FIELD_PATTERNS = [
     ("brand", r"\b(brand|make|manufacturer)\b"),
     ("name", r"\b(name|product|products|item|items|description|model|goods)\b"),
 ]
-REQUIRED = {"name": "Product name", "buying_price": "Buying price",
-            "selling_price": "Selling price", "quantity": "Quantity"}
-LABELS = {**REQUIRED, "category": "Category", "reorder_level": "Reorder level", "brand": "Brand"}
+REQUIRED = {"name": "Product name", "selling_price": "Selling price", "quantity": "Quantity"}
+LABELS = {**REQUIRED, "buying_price": "Buying price", "category": "Category", "reorder_level": "Reorder level",
+          "brand": "Brand"}
 
 TEMPLATE_ROWS = [
     ("Samsung Galaxy A15 128GB", "Phones", 17500, 21000, 12, 4),
@@ -93,8 +97,8 @@ def find_header(rows):
     missing = [label for f, label in REQUIRED.items() if f not in found]
     raise ProductFileError(
         "Couldn't find these columns: " + ", ".join(missing)
-        + ". The first row should have headings like: Product name, Category, Buying price, Selling price, "
-          "Quantity, Reorder level. Download the template to see the layout.")
+        + ". The first row should have headings like: Product name, Category, Selling price, Quantity, "
+          "Reorder level (Buying price is optional). Download the template to see the layout.")
 
 
 def _number(value):
@@ -144,15 +148,14 @@ def parse(filename, data):
             errors.append({"row": line, "name": name, "error": "A price or quantity is not a number."})
             continue
         problem = None
-        missing = [label for label, v in (("buying price", buying), ("selling price", selling), ("quantity", qty))
-                   if v is None]
+        missing = [label for label, v in (("selling price", selling), ("quantity", qty)) if v is None]
         if missing:
             problem = "Missing " + " and ".join(missing) + "."
-        elif min(buying, selling, qty, reorder or 0) < 0:
+        elif min(buying or 0, selling, qty, reorder or 0) < 0:
             problem = "Values cannot be negative."
         elif qty != int(qty) or (reorder is not None and reorder != int(reorder)):
             problem = "Quantity and reorder level must be whole numbers."
-        elif selling < buying:
+        elif buying is not None and selling < buying:
             problem = f"Selling price (KSh {selling:,.0f}) is below buying price (KSh {buying:,.0f})."
         if problem:
             errors.append({"row": line, "name": name, "error": problem})
@@ -178,6 +181,8 @@ def apply(db, items, commit):
     fields = ("category", "buying_price", "selling_price", "quantity", "reorder_level")
     for it in items:
         old = existing.get(it["name"].lower())
+        if it["buying_price"] is None:  # selling-price-only sheet
+            it = {**it, "buying_price": old["buying_price"] if old else 0, "cost_missing": old is None}
         if old is None:
             created.append(it)
             if commit:

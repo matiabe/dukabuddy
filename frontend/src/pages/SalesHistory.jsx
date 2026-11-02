@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, Trash2 } from 'lucide-react'
 import { api, isoDate, ksh, when } from '../api.js'
 import ReceiptModal from '../components/Receipt.jsx'
 import { useAuth } from '../auth.jsx'
-import { Alert, Button, Card, PageHeader, inputClass } from '../components/ui.jsx'
+import { Alert, Button, Card, Field, PageHeader, inputClass } from '../components/ui.jsx'
 
 const inlineInput = inputClass.replace('w-full', 'w-auto')
 
@@ -24,13 +24,27 @@ export default function SalesHistory({ navigate }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [receipt, setReceipt] = useState(null)
+  const [removing, setRemoving] = useState(null) // sale the owner is about to remove
+  const [removed, setRemoved] = useState([])
+  const [success, setSuccess] = useState('')
+  const [reload, setReload] = useState(0)
 
   useEffect(() => {
     const t = setTimeout(() => {
       api.transactions({ from, to, payment, q }).then(setData).catch((e) => setError(e.message))
     }, 250) // debounce search typing
     return () => clearTimeout(t)
-  }, [from, to, payment, q])
+  }, [from, to, payment, q, reload])
+  useEffect(() => {
+    if (isOwner) api.removedSales().then(setRemoved).catch(() => {})
+  }, [isOwner, reload])
+
+  const onRemoved = (tx) => {
+    setRemoving(null)
+    setReceipt(null)
+    setSuccess(`Sale ${tx.receipt_no} (${ksh(tx.total)}) removed. ${tx.items_count} item(s) put back in stock.`)
+    setReload((n) => n + 1)
+  }
 
   const pickRange = (r) => {
     setRange(r.id)
@@ -82,6 +96,7 @@ export default function SalesHistory({ navigate }) {
       </Card>
 
       <Alert>{error}</Alert>
+      <div className="mb-4"><Alert type="success">{success}</Alert></div>
       {!data && !error && <p className="text-slate-500">Loading…</p>}
 
       {data && (
@@ -161,7 +176,7 @@ export default function SalesHistory({ navigate }) {
                         {t.points_earned > 0 && <span className="ml-1 text-xs text-emerald-700">+{t.points_earned} pts</span>}
                       </td>
                       <td className="px-5 py-3 text-slate-500">{t.payment_method}</td>
-                      <td className="px-5 py-3 text-right text-slate-500">{t.discount ? ksh(t.discount) : '—'}</td>
+                      <td className="px-5 py-3 text-right text-slate-500">{t.discount + (t.price_cut || 0) ? ksh(t.discount + (t.price_cut || 0)) : "—"}</td>
                       <td className="px-5 py-3 text-right font-semibold">{ksh(t.total)}</td>
                       {isOwner && <td className="px-5 py-3 text-right text-slate-600">{ksh(t.profit)}</td>}
                     </tr>
@@ -176,8 +191,92 @@ export default function SalesHistory({ navigate }) {
         </>
       )}
 
-      <ReceiptModal tx={receipt} onClose={() => setReceipt(null)} />
+      {isOwner && removed.length > 0 && (
+        <Card className="mt-6">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <h2 className="font-semibold text-slate-900">Removed sales</h2>
+            <p className="text-xs text-slate-400">Sales the owner removed because they didn't really happen. They are not counted anywhere.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-5 py-3">Receipt</th><th className="px-5 py-3">Items</th><th className="px-5 py-3 text-right">Total</th>
+                  <th className="px-5 py-3">Sold</th><th className="px-5 py-3">Removed</th><th className="px-5 py-3">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {removed.map((r) => (
+                  <tr key={r.id}>
+                    <td className="whitespace-nowrap px-5 py-3 font-mono text-xs text-slate-500 line-through">{r.receipt_no}</td>
+                    <td className="max-w-64 px-5 py-3 text-slate-700"><p className="truncate">{r.items}</p></td>
+                    <td className="px-5 py-3 text-right">{ksh(r.total)}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-slate-500">{when(r.sold_at)}{r.served_by && <span className="block text-xs">by {r.served_by}</span>}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-slate-500">{when(r.removed_at)}<span className="block text-xs">by {r.removed_by}</span></td>
+                    <td className="px-5 py-3 text-slate-700">{r.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <ReceiptModal tx={receipt} onClose={() => setReceipt(null)}>
+        {isOwner && (
+          <Button variant="ghost" className="text-red-600 hover:bg-red-50" onClick={() => setRemoving(receipt)}>
+            <Trash2 size={16} /> Remove sale
+          </Button>
+        )}
+      </ReceiptModal>
+      {removing && <RemoveSale tx={removing} onCancel={() => setRemoving(null)} onDone={onRemoved} />}
     </>
+  )
+}
+
+// Owner confirms removing a sale that didn't really happen (stock goes back, points are reversed)
+function RemoveSale({ tx, onCancel, onDone }) {
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async (e) => {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await api.removeSale(tx.id, reason)
+      onDone(tx)
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4" onClick={busy ? undefined : onCancel}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-slate-900">Remove sale {tx.receipt_no}?</h2>
+        <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+          <p>{tx.items.map((i) => `${i.quantity}× ${i.product_name}`).join(', ')}</p>
+          <p className="mt-1 font-semibold">{ksh(tx.total)} · {tx.payment_method} · {when(tx.created_at)}</p>
+        </div>
+        <ul className="list-disc space-y-1 pl-5 text-xs text-slate-500">
+          <li>The items go back into stock.</li>
+          <li>It disappears from sales totals and reports.</li>
+          {tx.customer_name && <li>{tx.customer_name}'s loyalty points from this sale are reversed.</li>}
+          <li>This cannot be undone. It stays listed under "Removed sales" with your reason.</li>
+        </ul>
+        <Field label="Why is it being removed?">
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Customer didn't pay / recorded by mistake" required minLength={3} autoFocus />
+        </Field>
+        <Alert>{error}</Alert>
+        <div className="flex gap-2">
+          <Button type="submit" variant="danger" disabled={busy || reason.trim().length < 3} className="flex-1">
+            {busy ? 'Removing…' : 'Remove sale'}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+        </div>
+      </form>
+    </div>
   )
 }
 

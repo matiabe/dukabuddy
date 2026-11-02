@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Gift, Minus, Plus, Receipt, Search, ShoppingCart, Trash2 } from 'lucide-react'
 import { api, ksh } from '../api.js'
+import { useAuth } from '../auth.jsx'
 import ReceiptModal from '../components/Receipt.jsx'
 import { Alert, Button, Card, Field, PageHeader, TierBadge, inputClass } from '../components/ui.jsx'
 
 const METHODS = ['Cash', 'M-Pesa', 'Card', 'Credit']
+// Phones/tablets: don't pop the keyboard up over the products on page load
+const HAS_MOUSE = typeof window !== 'undefined' && window.matchMedia('(pointer: fine)').matches
 
 export default function Sales({ navigate }) {
   const [products, setProducts] = useState([])
@@ -18,7 +22,11 @@ export default function Sales({ navigate }) {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [receipt, setReceipt] = useState(null)
+  const [draft, setDraft] = useState(false) // receipt shown is a preview; nothing is saved until the sale is recorded
+  const [printError, setPrintError] = useState('')
   const [warnings, setWarnings] = useState([])
+  const { user } = useAuth()
+  const cartRef = useRef(null)
 
   const load = () => {
     api.products().then(setProducts).catch((e) => setError(e.message))
@@ -56,11 +64,15 @@ export default function Sales({ navigate }) {
   const customer = customers.find((c) => String(c.id) === String(customerId))
   const maxRedeem = customer ? Math.min(customer.points, Math.floor(subtotal)) : 0
   const discount = customer ? Math.min(Number(redeem) || 0, maxRedeem) : 0
-  const total = subtotal - discount
-  const pointsToEarn = customer ? Math.floor(Math.floor(total / 100) * customer.multiplier) : 0
+  const total = subtotal - discount // at the marked prices
+  // Amount received: below the total = price agreed with the customer; above it = change (cash only)
+  const received = cash !== ''
   const cashNum = Number(cash) || 0
-  const change = method === 'Cash' && cash !== '' ? cashNum - total : 0
-  const cashShort = method === 'Cash' && cash !== '' && cashNum < total
+  const priceCut = received && cashNum > 0 && cashNum < total ? total - cashNum : 0
+  const toPay = total - priceCut
+  const change = method === 'Cash' && received ? Math.max(0, cashNum - total) : 0
+  const badAmount = received && (cashNum <= 0 || (method !== 'Cash' && cashNum > total))
+  const pointsToEarn = customer ? Math.floor(Math.floor(toPay / 100) * customer.multiplier) : 0
 
   const reset = () => {
     setCart([])
@@ -70,8 +82,31 @@ export default function Sales({ navigate }) {
     setMethod('Cash')
   }
 
-  const complete = async () => {
+  // Step 1: show the receipt as a preview. Nothing is recorded yet.
+  const review = () => {
     setError('')
+    setPrintError('')
+    setReceipt({
+      receipt_no: '(preview)',
+      created_at: new Date().toLocaleString('en-KE'),
+      items: cart.map((l) => ({
+        product_id: l.product.id, product_name: l.product.name, quantity: l.qty, unit_price: l.product.selling_price,
+      })),
+      subtotal, discount, points_redeemed: discount, total: toPay, price_cut: priceCut,
+      payment_method: method,
+      amount_paid: received ? cashNum : toPay,
+      change_given: change,
+      items_count: items,
+      served_by: user.name,
+      customer_name: customer?.name,
+      points_earned: pointsToEarn,
+    })
+    setDraft(true)
+  }
+
+  // Step 2: recording the sale saves it (and deducts stock). Printing the receipt is optional.
+  const recordSale = async (print = false) => {
+    setPrintError('')
     setSaving(true)
     try {
       const res = await api.checkout({
@@ -79,24 +114,35 @@ export default function Sales({ navigate }) {
         customer_id: customerId || null,
         redeem_points: discount,
         payment_method: method,
-        amount_paid: method === 'Cash' && cash !== '' ? cashNum : null,
+        amount_paid: received ? cashNum : null,
       })
-      setReceipt(res.transaction)
+      // Render the real receipt (with its receipt number) before the print dialog opens
+      flushSync(() => {
+        setReceipt(res.transaction)
+        setDraft(false)
+        setSaving(false)
+      })
       setWarnings(res.low_stock)
       reset()
       load()
+      if (print) window.print()
     } catch (err) {
-      setError(err.message)
-    } finally {
+      setPrintError(err.message)
       setSaving(false)
     }
+  }
+
+  const closeReceipt = () => {
+    setReceipt(null)
+    setDraft(false)
+    setPrintError('')
   }
 
   return (
     <>
       <PageHeader
         title="New Sale"
-        subtitle="Add items to the cart, then complete the sale. Stock is deducted automatically."
+        subtitle="Add items to the cart, review, then record the sale. Printing the receipt is optional."
         action={<Button variant="ghost" onClick={() => navigate('history')}><Receipt size={16} /> Sales history</Button>}
       />
 
@@ -115,10 +161,10 @@ export default function Sales({ navigate }) {
           <div className="border-b border-slate-100 p-4">
             <div className="relative">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input autoFocus className={`${inputClass} pl-9`} placeholder="Search products to add…" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <input autoFocus={HAS_MOUSE} className={`${inputClass} pl-9`} placeholder="Search products to add…" value={query} onChange={(e) => setQuery(e.target.value)} />
             </div>
           </div>
-          <div className="grid max-h-[65vh] gap-2 overflow-y-auto p-4 sm:grid-cols-2">
+          <div className="grid max-h-[50vh] gap-2 xl:max-h-[65vh] overflow-y-auto p-4 sm:grid-cols-2">
             {filtered.map((p) => {
               const left = p.quantity - inCart(p.id)
               return (
@@ -148,7 +194,8 @@ export default function Sales({ navigate }) {
         </Card>
 
         {/* Cart & checkout */}
-        <Card className="flex flex-col xl:col-span-2">
+        <div ref={cartRef} className="scroll-mt-20 xl:col-span-2">
+        <Card className="flex flex-col">
           <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
             <h2 className="flex items-center gap-2 font-semibold text-slate-900"><ShoppingCart size={18} /> Cart ({items})</h2>
             {cart.length > 0 && <button onClick={reset} className="text-xs font-medium text-slate-500 hover:text-red-600">Clear</button>}
@@ -212,20 +259,28 @@ export default function Sales({ navigate }) {
                 ))}
               </div>
             </div>
-            {method === 'Cash' && (
-              <Field label="Cash received (optional)">
-                <input type="number" min="0" className={inputClass} placeholder={total ? String(total) : ''} value={cash} onChange={(e) => setCash(e.target.value)} />
-              </Field>
-            )}
+            <Field label="Amount received (optional)">
+              <input type="number" min="0" inputMode="decimal" className={inputClass} placeholder={total ? String(total) : ''} value={cash} onChange={(e) => setCash(e.target.value)} />
+            </Field>
+            <p className="-mt-2 text-xs text-slate-400">Agreed a lower price? Type what the customer actually paid and the sale is recorded at that amount.</p>
 
             <div className="rounded-xl bg-slate-50 p-4 text-sm">
               <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>{ksh(subtotal)}</span></div>
               {discount > 0 && <div className="flex justify-between text-slate-500"><span>Points discount</span><span>−{ksh(discount)}</span></div>}
-              <div className="mt-1 flex justify-between text-xl font-bold text-slate-900"><span>Total</span><span>{ksh(total)}</span></div>
-              {method === 'Cash' && cash !== '' && (
-                <div className={`flex justify-between font-semibold ${cashShort ? 'text-red-600' : 'text-emerald-700'}`}>
-                  <span>{cashShort ? 'Short by' : 'Change'}</span><span>{ksh(Math.abs(change))}</span>
-                </div>
+              {priceCut > 0 && (
+                <>
+                  <div className="flex justify-between text-slate-500"><span>Marked total</span><span>{ksh(total)}</span></div>
+                  <div className="flex justify-between font-medium text-amber-700"><span>Agreed price reduction</span><span>−{ksh(priceCut)}</span></div>
+                </>
+              )}
+              <div className="mt-1 flex justify-between text-xl font-bold text-slate-900"><span>Total</span><span>{ksh(toPay)}</span></div>
+              {change > 0 && (
+                <div className="flex justify-between font-semibold text-emerald-700"><span>Change</span><span>{ksh(change)}</span></div>
+              )}
+              {badAmount && (
+                <p className="mt-1 text-xs font-medium text-red-600">
+                  {cashNum <= 0 ? 'Amount received must be more than zero.' : `${method} payments can't be more than the total (no change is given).`}
+                </p>
               )}
               {customer && (
                 <p className="mt-1 flex items-center gap-1 text-xs font-medium text-emerald-700">
@@ -235,15 +290,31 @@ export default function Sales({ navigate }) {
             </div>
 
             <Alert>{error}</Alert>
-            <Button className="w-full py-3 text-base" disabled={saving || cart.length === 0 || cashShort} onClick={complete}>
-              <Receipt size={18} /> {saving ? 'Processing…' : `Complete sale · ${ksh(total)}`}
+            <Button className="w-full py-3 text-base" disabled={saving || cart.length === 0 || badAmount} onClick={review}>
+              <Receipt size={18} /> {`Checkout · ${ksh(toPay)}`}
             </Button>
           </div>
         </Card>
+        </div>
       </div>
 
-      <ReceiptModal tx={receipt} onClose={() => setReceipt(null)}>
-        <Button className="flex-1" onClick={() => setReceipt(null)}>New sale</Button>
+      {/* Phones/tablets: the cart sits below the product list, so keep a shortcut to it on screen */}
+      {cart.length > 0 && (
+        <>
+          <div className="h-20 xl:hidden" />
+          <button
+            onClick={() => cartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="fixed inset-x-3 bottom-3 z-20 flex items-center justify-between rounded-xl bg-emerald-600 px-4 py-3.5 text-white shadow-lg xl:hidden"
+          >
+            <span className="flex items-center gap-2 font-semibold"><ShoppingCart size={18} /> View cart ({items})</span>
+            <span className="font-bold">{ksh(toPay)}</span>
+          </button>
+        </>
+      )}
+
+      <ReceiptModal tx={receipt} onClose={closeReceipt} draft={draft} onRecord={draft ? recordSale : undefined}
+        busy={saving} error={printError}>
+        {!draft && <Button className="flex-1" onClick={closeReceipt}>New sale</Button>}
       </ReceiptModal>
     </>
   )

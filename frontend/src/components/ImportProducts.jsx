@@ -55,9 +55,10 @@ export default function ImportProducts({ onDone }) {
         <div>
           <h2 className="flex items-center gap-2 font-semibold text-slate-800"><FileSpreadsheet size={18} /> Import products from Excel</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            First row = headings: <b>Product name, Category, Buying price, Selling price, Quantity, Reorder level</b> (category and
-            reorder level are optional; a Brand column is added to the name). Products that already exist (same name) get their
-            prices, category, reorder level and stock quantity updated from the file.
+            First row = headings: <b>Product name, Category, Buying price, Selling price, Quantity, Reorder level</b> (buying price,
+            category and reorder level are optional; a Brand column is added to the name). Products that already exist (same name)
+            get their prices, category, reorder level and stock quantity updated from the file. Without a buying price, existing
+            products keep their current one and new products start at KSh 0 until you edit them.
           </p>
         </div>
         <div className="flex gap-2">
@@ -94,7 +95,11 @@ export default function ImportProducts({ onDone }) {
             <Section title="New products" tone="text-emerald-700">
               {preview.created.map((p) => (
                 <tr key={p.row}>
-                  <Td>{p.name}</Td><Td>{p.category}</Td><Td>{ksh(p.buying_price)} → {ksh(p.selling_price)}</Td>
+                  <Td>{p.name}</Td><Td>{p.category}</Td><Td>
+                    {p.cost_missing
+                      ? <>Sells at {ksh(p.selling_price)} <span className="text-amber-600">(buying price not set)</span></>
+                      : <>{ksh(p.buying_price)} → {ksh(p.selling_price)}</>}
+                  </Td>
                   <Td>{p.quantity} in stock, reorder at {p.reorder_level}</Td>
                 </tr>
               ))}

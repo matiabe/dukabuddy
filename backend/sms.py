@@ -183,7 +183,8 @@ def notify_sale(db, tid):
         lines = ", ".join(f"{r['qty']}x {r['name']}" for r in items)
         if len(lines) > 70:
             lines = lines[:67] + "..."
-        text = (f"{shop}: Sale DB-{tid:05d} {ksh(tx['total'])} ({tx['payment_method']}) - {lines}."
+        cut = f", reduced from {ksh(tx['total'] + tx['price_cut'])}" if tx["price_cut"] else ""
+        text = (f"{shop}: Sale DB-{tid:05d} {ksh(tx['total'])} ({tx['payment_method']}{cut}) - {lines}."
                 f" By {tx['served_by'] or 'unknown'}, {tx['created_at'][11:16]}")
         send(db, "sale", [(u, text) for u in people], ref_key=f"sale:{tid}")
 

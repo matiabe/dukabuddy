@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BellRing, Bot, FileBarChart, History, KeyRound, LayoutDashboard, LogOut, Menu, Package, RefreshCcw, ShoppingCart, Smartphone, TrendingUp, TriangleAlert, UserCog, Users, X } from 'lucide-react'
+import { BellRing, Bot, FileBarChart, History, KeyRound, LayoutDashboard, LogOut, Menu, Package, RefreshCcw, ShoppingCart, Smartphone, Store, TrendingUp, TriangleAlert, UserCog, Users, X } from 'lucide-react'
 import Dashboard from './pages/Dashboard.jsx'
+import Overview from './pages/Overview.jsx'
 import Products from './pages/Products.jsx'
 import Sales from './pages/Sales.jsx'
 import LowStock from './pages/LowStock.jsx'
@@ -19,6 +20,7 @@ import { Alert, Button, Field, inputClass } from './components/ui.jsx'
 
 // staff: true = staff can open it too (everything else is owner-only; the backend enforces the same rules)
 const NAV = [
+  { id: 'overview', label: 'Shop Overview', icon: Store, page: Overview, section: 'Shop', staff: true },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, page: Dashboard, section: 'Shop' },
   { id: 'sales', label: 'New Sale', icon: ShoppingCart, page: Sales, section: 'Shop', staff: true },
   { id: 'history', label: 'Sales History', icon: History, page: SalesHistory, section: 'Shop', staff: true },
@@ -91,11 +93,11 @@ function Shell({ auth }) {
   return (
     <div className="min-h-screen lg:flex">
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
-        <Brand />
-        <button onClick={() => setOpen(!open)} className="rounded-lg p-2 hover:bg-slate-100" aria-label="Toggle menu">
+      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 lg:hidden">
+        <button onClick={() => setOpen(!open)} className="-ml-2 rounded-lg p-2 hover:bg-slate-100" aria-label="Toggle menu">
           {open ? <X size={22} /> : <Menu size={22} />}
         </button>
+        <Brand onClick={() => go('overview')} />
       </header>
 
       {open && <div className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" onClick={() => setOpen(false)} />}
@@ -106,7 +108,7 @@ function Shell({ auth }) {
         }`}
       >
         <div className="px-6 pb-2 pt-6">
-          <Brand dark />
+          <Brand dark onClick={() => go('overview')} />
         </div>
         <nav className="space-y-0.5 overflow-y-auto px-3 pb-4" style={{ maxHeight: 'calc(100vh - 13rem)' }}>
           {nav.map(({ id, label, icon: Icon, section }, i) => (
@@ -185,16 +187,17 @@ function ChangePassword({ onClose }) {
   )
 }
 
-function Brand({ dark }) {
+// Tapping the shop name opens the Shop Overview (sales + stock) for everyone
+function Brand({ dark, onClick }) {
   return (
-    <div className="flex items-center gap-2">
+    <button onClick={onClick} className="flex items-center gap-2 text-left" title="Shop Overview">
       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500 text-white">
         <Smartphone size={20} />
       </div>
       <div>
         <div className={`text-lg font-bold leading-tight ${dark ? 'text-white' : 'text-slate-900'}`}>NyamsComm</div>
-        <div className="text-xs text-slate-400">Electronics</div>
+        <div className="text-xs text-slate-400">General Electronics</div>
       </div>
-    </div>
+    </button>
   )
 }

@@ -18,6 +18,7 @@ export function Button({ variant = 'primary', className = '', ...props }) {
   const styles = {
     primary: 'bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-emerald-300',
     ghost: 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50',
+    danger: 'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-300',
   }
   return (
     <button

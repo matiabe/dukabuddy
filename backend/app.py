@@ -1,6 +1,7 @@
 """NyamsComm backend (electronics dealer edition) - Flask + PostgreSQL."""
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -121,6 +122,23 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions (created_at)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_customer ON transactions (customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_loyalty_customer ON loyalty_points (customer_id)",
+    # price agreed at the till below the marked price (customer paid less): marked total - amount received
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS price_cut DOUBLE PRECISION NOT NULL DEFAULT 0",
+    # audit trail of sales the owner removed (the sale itself is deleted so no report counts it)
+    """CREATE TABLE IF NOT EXISTS removed_sales (
+        id SERIAL PRIMARY KEY,
+        transaction_id INTEGER NOT NULL,
+        receipt_no TEXT NOT NULL,
+        total DOUBLE PRECISION NOT NULL,
+        payment_method TEXT,
+        items TEXT NOT NULL,
+        customer_name TEXT,
+        served_by TEXT,
+        sold_at TEXT,
+        reason TEXT NOT NULL,
+        removed_by TEXT NOT NULL,
+        removed_at TEXT NOT NULL DEFAULT local_now()
+    )""",
 ]
 
 
@@ -495,10 +513,17 @@ def checkout(db, items, customer_id=None, redeem=0, payment_method="Cash", amoun
         raise SaleError(f"Discount (KSh {discount:,.0f}) is more than the sale total (KSh {subtotal:,.0f}).")
     total = subtotal - discount
 
-    if payment_method == "Cash" and amount_paid not in (None, ""):
-        paid = float(amount_paid)
+    # Amount received: less than the total = a price agreed with the customer (recorded as price_cut);
+    # more than the total = change (cash only).
+    price_cut = 0
+    if amount_paid not in (None, ""):
+        paid = round(float(amount_paid), 2)
+        if paid <= 0:
+            raise SaleError("Amount received must be more than zero.")
         if paid < total:
-            raise SaleError(f"Cash received (KSh {paid:,.0f}) is less than the total (KSh {total:,.0f}).")
+            price_cut, total = total - paid, paid
+        elif paid > total and payment_method != "Cash":
+            raise SaleError(f"Amount received (KSh {paid:,.0f}) is more than the total (KSh {total:,.0f}).")
     else:
         paid = total
     earned = points_for(total, customer_spend(db, customer_id)) if customer is not None else 0
@@ -506,15 +531,17 @@ def checkout(db, items, customer_id=None, redeem=0, payment_method="Cash", amoun
     try:
         tid = db.execute(
             "INSERT INTO transactions (customer_id, subtotal, discount, total, items_count, payment_method,"
-            " amount_paid, change_given, points_earned, points_redeemed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " amount_paid, change_given, points_earned, points_redeemed, price_cut)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (customer_id, subtotal, discount, total, sum(wanted.values()), payment_method, paid, paid - total,
-             earned, redeem),
+             earned, redeem, price_cut),
         ).lastrowid
-        remaining = discount
+        reduction = discount + price_cut
+        remaining = reduction
         for i, l in enumerate(lines):
             p, qty = l["product"], l["qty"]
-            # Spread the points discount across lines so per-product revenue stays accurate
-            share = remaining if i == len(lines) - 1 else round(discount * l["gross"] / subtotal, 2)
+            # Spread points discount + agreed price cut across lines so per-product revenue stays accurate
+            share = remaining if i == len(lines) - 1 else round(reduction * l["gross"] / subtotal, 2)
             remaining -= share
             cur = db.execute("UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
                              (qty, p["id"], qty))
@@ -615,6 +642,53 @@ def record_sale():
     data = request.get_json(silent=True) or {}
     data["items"] = [{"product_id": data.get("product_id"), "quantity": data.get("quantity")}]
     return run_checkout(data)
+
+
+@app.delete("/api/transactions/<int:tid>")
+def remove_transaction(tid):
+    """Owner only (not in auth.STAFF_ALLOWED): delete a sale that didn't really happen. Puts the stock back,
+    reverses the loyalty points and keeps a copy in removed_sales."""
+    reason = str((request.get_json(silent=True) or {}).get("reason") or "").strip()
+    if len(reason) < 3:
+        return jsonify(error="Write why this sale is being removed."), 400
+    db = get_db()
+    tx = fetch_transaction(db, tid)
+    if tx is None:
+        return jsonify(error="Sale not found. It may already have been removed."), 404
+    try:
+        sale_ids = [r["id"] for r in db.execute("SELECT id FROM sales WHERE transaction_id = ?", (tid,)).fetchall()]
+        for it in db.execute("SELECT product_id, SUM(quantity) AS qty FROM sales WHERE transaction_id = ?"
+                             " GROUP BY product_id", (tid,)).fetchall():
+            db.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (it["qty"], it["product_id"]))
+        if tx["customer_id"]:
+            receipt = receipt_no(tid)
+            db.execute("DELETE FROM loyalty_points WHERE customer_id = ? AND reason LIKE ?",
+                       (tx["customer_id"], f"%receipt {receipt}"))
+            # points earned on this sale come off, points spent on it are given back (never below zero)
+            db.execute("UPDATE customers SET points = GREATEST(points - ? + ?, 0) WHERE id = ?",
+                       (tx["points_earned"], tx["points_redeemed"], tx["customer_id"]))
+        if sale_ids:
+            marks = ",".join("?" * len(sale_ids))
+            db.execute(f"DELETE FROM loyalty_points WHERE sale_id IN ({marks})", sale_ids)
+        db.execute("DELETE FROM sales WHERE transaction_id = ?", (tid,))
+        db.execute("DELETE FROM transactions WHERE id = ?", (tid,))
+        db.execute(
+            "INSERT INTO removed_sales (transaction_id, receipt_no, total, payment_method, items, customer_name,"
+            " served_by, sold_at, reason, removed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (tid, tx["receipt_no"], tx["total"], tx["payment_method"],
+             ", ".join(f"{i['quantity']}x {i['product_name']}" for i in tx["items"]),
+             tx["customer_name"], tx["served_by"], tx["created_at"], reason, auth.current_user()["name"]))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify(ok=True, receipt_no=tx["receipt_no"], restocked=tx["items_count"])
+
+
+@app.get("/api/transactions/removed")
+def removed_transactions():
+    db_rows = get_db().execute("SELECT * FROM removed_sales ORDER BY removed_at DESC, id DESC LIMIT 100").fetchall()
+    return jsonify([dict(r) for r in db_rows])
 
 
 @app.get("/api/transactions/<int:tid>")
@@ -874,6 +948,53 @@ def dashboard():
         low_stock_count=len(low),
         low_stock=low,
         recent_sales=recent,
+    )
+
+
+# ---------------- Shop overview (owner and staff) ----------------
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@app.get("/api/overview")
+def overview():
+    """What was sold in a period (default: today) and what is in stock now. Cost figures are owner-only
+    (stock_cost_value is in auth.COST_KEYS, so staff never receive it)."""
+    db = get_db()
+    today = db.execute("SELECT left(local_now(), 10)").fetchone()[0]
+    start = request.args.get("from") or today
+    end = request.args.get("to") or start
+    if not DATE_RE.fullmatch(start) or not DATE_RE.fullmatch(end) or end < start:
+        return jsonify(error="Choose a valid date range."), 400
+    period = "left(created_at, 10) BETWEEN ? AND ?"
+    k = db.execute(
+        "SELECT COUNT(*) AS count, COALESCE(SUM(items_count), 0) AS items, COALESCE(SUM(total), 0) AS revenue,"
+        " COALESCE(SUM(subtotal), 0) AS marked, COALESCE(SUM(price_cut), 0) AS price_cuts,"
+        f" COALESCE(SUM(discount), 0) AS points_discounts FROM transactions WHERE {period}", (start, end)).fetchone()
+    by_payment = db.execute(
+        f"SELECT payment_method AS method, COUNT(*) AS count, SUM(total) AS amount FROM transactions WHERE {period}"
+        " GROUP BY payment_method ORDER BY amount DESC", (start, end)).fetchall()
+    by_staff = db.execute(
+        "SELECT COALESCE(u.name, 'Unknown') AS name, COUNT(*) AS count, SUM(t.total) AS amount FROM transactions t"
+        f" LEFT JOIN users u ON u.id = t.user_id WHERE left(t.created_at, 10) BETWEEN ? AND ?"
+        " GROUP BY u.name ORDER BY amount DESC", (start, end)).fetchall()
+    sold = db.execute(
+        "SELECT p.id, p.name, p.category, SUM(s.quantity) AS quantity, SUM(s.total) AS amount, p.quantity AS stock_left"
+        " FROM sales s JOIN products p ON p.id = s.product_id WHERE left(s.created_at, 10) BETWEEN ? AND ?"
+        " GROUP BY p.id ORDER BY amount DESC, p.name", (start, end)).fetchall()
+    stock = db.execute(
+        "SELECT id, name, category, quantity, selling_price, quantity * selling_price AS value,"
+        " quantity <= reorder_level AS low FROM products ORDER BY name").fetchall()
+    st = db.execute(
+        "SELECT COUNT(*) AS products, COALESCE(SUM(quantity), 0) AS units,"
+        " COALESCE(SUM(quantity * selling_price), 0) AS retail_value,"
+        " COALESCE(SUM(quantity * buying_price), 0) AS stock_cost_value,"
+        " COALESCE(SUM(CASE WHEN quantity = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock,"
+        " COALESCE(SUM(CASE WHEN quantity <= reorder_level THEN 1 ELSE 0 END), 0) AS low FROM products").fetchone()
+    return jsonify(
+        period={"from": start, "to": end, "today": today},
+        sales={**dict(k), "by_payment": [dict(r) for r in by_payment], "by_staff": [dict(r) for r in by_staff]},
+        sold_items=[dict(r) for r in sold],
+        stock={**dict(st), "items": [dict(r) for r in stock]},
     )
 
 

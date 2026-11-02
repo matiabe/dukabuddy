@@ -48,12 +48,14 @@ STAFF_ALLOWED = [
     ("POST", r"/api/transactions"),
     ("GET", r"/api/transactions(/\d+)?"),
     ("GET", r"/api/loyalty/rules"),
+    ("GET", r"/api/overview"),
     ("GET", r"/api/customers(/\d+)?"),
     ("POST", r"/api/customers"),
     ("POST", r"/api/auth/password"),
 ]
 PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup)")]
-COST_KEYS = {"buying_price", "unit_cost", "profit", "suggested_cost", "total_cost", "margin_pct", "cost"}
+COST_KEYS = {"buying_price", "unit_cost", "profit", "suggested_cost", "total_cost", "margin_pct", "cost",
+             "stock_cost_value"}
 
 
 def init_auth(app, db):
