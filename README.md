@@ -36,7 +36,7 @@ router's admin page reserve a fixed IP (*DHCP reservation* / *static lease*) for
 | `.env` (project root) | `POSTGRES_PASSWORD` | Database password, created by `start.bat`. Don't change it after the first start (the database keeps the old one) unless you reset the database. |
 | | `APP_PORT` | Port staff devices use (default 80). |
 | | `DEMO_DATA` | `0` = real shop, starts empty (default). `1` = sample electronics shop to try things out. Only applies to a new, empty database. |
-| `backend/.env` | `ANTHROPIC_API_KEY`, `SMTP_*`, `OWNER_EMAIL`, `AUTOMATION_INTERVAL_MINUTES` | AI assistant, email alerts, automation interval (see `backend/.env.example`). Its `DATABASE_URL` is ignored in Docker. |
+| `backend/.env` | `ANTHROPIC_API_KEY`, `SMTP_*`, `OWNER_EMAIL`, `AUTOMATION_INTERVAL_MINUTES`, `AT_*` | AI assistant, email alerts, automation interval, SMS via Africa's Talking (see `backend/.env.example`). Its `DATABASE_URL` is ignored in Docker. |
 
 After changing a setting, run `start.bat` again.
 
@@ -59,10 +59,10 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 
 | | Owner | Staff |
 |---|---|---|
-| New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
+| Shop Overview, New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
 | Products: view, search, **Restock** (receive deliveries) | ✓ | ✓ |
 | Buying prices, profit, margins, stock value | ✓ | hidden |
-| Add products, Excel import, bonus points | ✓ | |
+| Add products, Excel import, bonus points, remove a sale | ✓ | |
 | Dashboard, Restocking, Auto Restock, Performance, Reports, AI Assistant, Alerts & Settings | ✓ | |
 | Staff accounts: add staff, reset passwords, switch accounts off | ✓ | |
 
@@ -98,8 +98,13 @@ Run `start.bat` again (it restarts the backend). Without a key, the assistant fa
 - Dashboard: total products, today's sales, inventory value (at cost), low-stock count — all computed live from PostgreSQL
 - Add/view/search products, restock received goods
 - **Import products from Excel** (Products → *Import from Excel*): upload a `.xlsx` (or `.csv`) stock list, check the preview, then confirm. See below.
-- New Sale (till): multi-item cart, loyalty points, payment method (Cash / M-Pesa / Card / Credit, recorded as a label), cash change, printable receipt. Stock deducted automatically; a sale either fully succeeds or nothing changes
+- **Shop Overview** (owner and staff): what was sold in a period (today, yesterday, last 7 days, this month or any dates), split by payment method and staff member, plus current stock on hand
+- New Sale (till): multi-item cart, loyalty points, payment method (Cash / M-Pesa / Card / Credit, recorded as a label), cash change. Stock deducted automatically; a sale either fully succeeds or nothing changes
+  - **Checkout** shows the receipt as a preview first. Nothing is saved until the cashier taps **Record sale** (or **Record & print**). Printing is optional, and the recorded receipt can still be printed afterwards
+  - **Agreed price**: type the amount the customer actually paid. Less than the total records the sale at that amount, with the difference shown as an *agreed price reduction* on the receipt and in reports; more than the total gives change (cash only)
+  - Works on phones and tablets: the cart sits below the products, with a shortcut button to it
 - Sales History: every receipt, filter by date range / payment / search (receipt no., customer, product), revenue, gross profit, average sale, daily revenue chart, top products
+  - **Remove a sale** (owner only) that didn't really happen: a reason is required, the stock goes back, loyalty points are reversed, and a copy is kept in the *Removed sales* list
 - Customers & loyalty: points per KSh 100 spent, Bronze/Silver/Gold tiers, redeem points as discount, bonus awards, shopping behaviour per customer
 - Low-stock alerts: quantity ≤ reorder level
 - AI assistant: sends live inventory + 7-day sales to Claude for restock recommendations
@@ -126,6 +131,7 @@ Prices may contain `KSh`, commas or `/-`. Title rows above the headings, blank r
 - **Auto Restock**: a background job (every `AUTOMATION_INTERVAL_MINUTES`, default 60, plus "Run checks now") creates purchase orders for low stock. Established products are ordered automatically; new products (under 14 days) go to the owner for review; dead stock is never re-ordered. Mark orders *Received* to add the stock.
 - **New product check**: projects demand from early sales and recommends Restock / Not yet / Wait / Do not restock.
 - **Email alerts**: restock orders, weekly dead-stock digest, monthly report. Set the owner email in *Alerts & Settings* and SMTP in `backend/.env` (see `.env.example`; for Gmail use an App Password). Without SMTP every alert is kept in the in-app outbox.
+- **SMS alerts** (Africa's Talking): every active user with a phone number (set in *Staff accounts*) can get an SMS for each sale, a low-stock SMS, and an evening summary of the day (owners also see profit; staff never do). Switch each one on or off and set the summary hour in *Alerts & Settings*. Put `AT_USERNAME` and `AT_API_KEY` in `backend/.env` (use `AT_USERNAME=sandbox` to test free in their simulator; `AT_SENDER_ID` is optional). Without them, messages are only kept in the in-app SMS log. Sending runs in the background so the till never waits.
 - **Reports**: Sales, Inventory, Product Performance, Customers & Loyalty, Restock, and Monthly Performance - as PDF or Excel for any period, e.g. `NyamsComm_Sales_Report_2026-10-01_to_2026-10-31.pdf`. Last month's full report is emailed automatically on the 1st.
 
 The scheduler runs inside the Docker backend (or in `python app.py` when developing).
