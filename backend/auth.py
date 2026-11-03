@@ -51,6 +51,11 @@ STAFF_ALLOWED = [
     ("GET", r"/api/overview"),
     ("GET", r"/api/customers(/\d+)?"),
     ("POST", r"/api/customers"),
+    # debtors & creditors: everyone can record and update
+    ("GET", r"/api/debts(/\d+)?"),
+    ("POST", r"/api/debts(/\d+/entries)?"),
+    ("PUT", r"/api/debts/\d+"),
+    ("DELETE", r"/api/debts/\d+"),
     ("POST", r"/api/auth/password"),
 ]
 PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup)")]

@@ -61,10 +61,15 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 |---|---|---|
 | Shop Overview, New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
 | Products: view, search, **Restock** (receive deliveries) | ✓ | ✓ |
+| **Debtors & Creditors**: add, record payments, update and correct amounts | ✓ | ✓ |
 | Buying prices, profit, margins, stock value | ✓ | hidden |
 | Add products, Excel import, bonus points, remove a sale | ✓ | |
 | Dashboard, Restocking, Auto Restock, Performance, Reports, AI Assistant, Alerts & Settings | ✓ | |
 | Staff accounts: add staff, reset passwords, switch accounts off | ✓ | |
+
+**Debtors & Creditors** keeps two lists: customers who owe the shop (*Debtors*) and suppliers the shop owes (*Creditors*).
+Open a record to log a payment, add more owed, or correct the amount (a reason is required). Every change is saved in the
+record's history with who made it and when. Only records with a balance of KSh 0 can be deleted.
 
 Every receipt records **who served** the customer. Switching an account off or resetting its password logs that person out on every device straight away.
 Forgot the owner password? Another owner can reset it. If there is no other owner, run `reset-database.bat` (this deletes everything, so restore from a backup afterwards).

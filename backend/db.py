@@ -26,7 +26,8 @@ DATABASE_URL = (os.getenv("DUKABUDDY_TEST_DATABASE_URL") or
 
 # Tables with a SERIAL `id` column: INSERTs into these get `RETURNING id` added automatically
 ID_TABLES = {"products", "sales", "restocks", "customers", "loyalty_points", "transactions",
-             "purchase_orders", "email_outbox", "automation_runs", "users"}
+             "purchase_orders", "email_outbox", "automation_runs", "users",
+            "debts", "debt_entries"}
 INSERT_RE = re.compile(r"^\s*INSERT\s+INTO\s+(\w+)", re.IGNORECASE)
 
 

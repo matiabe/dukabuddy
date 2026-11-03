@@ -10,6 +10,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auth
 import automation
+import debts
 import product_import
 import reports
 import sms
@@ -49,6 +50,7 @@ app.register_blueprint(auth.bp)
 app.register_blueprint(automation.bp)
 app.register_blueprint(sms.bp)
 app.register_blueprint(reports.bp)
+app.register_blueprint(debts.bp)
 
 
 SCHEMA = [
@@ -170,6 +172,7 @@ def init_db():
             seed_automation_demo(db)
         auth.init_auth(app, db)
         sms.init_sms(db)  # after users exist: adds users.phone
+        debts.init_debts(db)
         backfill_transactions(db)
         db.commit()
     finally:
