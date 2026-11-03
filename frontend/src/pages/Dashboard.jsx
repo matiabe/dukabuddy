@@ -16,9 +16,9 @@ export default function Dashboard({ navigate }) {
   const stats = data && [
     { label: 'Total Products', value: data.total_products, sub: 'items in catalogue', icon: Package, color: 'bg-blue-100 text-blue-600' },
     { label: "Today's Sales", value: ksh(data.today_sales), sub: `${data.today_transactions} sales · ${data.today_items} items`, icon: Wallet, color: 'bg-emerald-100 text-emerald-600' },
-    { label: 'Inventory Value', value: ksh(data.inventory_value), sub: `Retail value ${ksh(data.inventory_retail_value)}`, icon: Boxes, color: 'bg-violet-100 text-violet-600' },
+    { label: 'Inventory Value', value: ksh(data.inventory_value), sub: `${data.inventory_units.toLocaleString()} units · at selling price`, icon: Boxes, color: 'bg-violet-100 text-violet-600' },
     { label: 'Total Sales', value: data.total_sales_count, sub: `${data.total_items_sold} items · ${ksh(data.total_revenue)} all time`, icon: Receipt, color: 'bg-sky-100 text-sky-600' },
-    { label: 'Need Restocking', value: data.low_stock_count, sub: `≈ ${ksh(data.restock_budget)} to restock`, icon: TriangleAlert, color: 'bg-amber-100 text-amber-600' },
+    { label: 'Need Restocking', value: data.low_stock_count, sub: 'at or below reorder level', icon: TriangleAlert, color: 'bg-amber-100 text-amber-600' },
   ]
 
   return (

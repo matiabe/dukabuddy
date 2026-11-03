@@ -5,20 +5,24 @@ import { Alert, Button, Card, Field, PageHeader, inputClass } from '../component
 
 const pad = (n) => String(n).padStart(2, '0')
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-const today = new Date()
-const PRESETS = [
-  { label: 'This month', from: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), to: isoDate(0) },
-  { label: 'Last month', from: ymd(new Date(today.getFullYear(), today.getMonth() - 1, 1)), to: ymd(new Date(today.getFullYear(), today.getMonth(), 0)) },
-  { label: 'Last 7 days', from: isoDate(-6), to: isoDate(0) },
-  { label: 'Last 30 days', from: isoDate(-29), to: isoDate(0) },
-]
-const lastMonth = PRESETS[1].from.slice(0, 7)
+// Built fresh every time (not once at app load) so a tab left open overnight still includes today's sales
+const presets = () => {
+  const today = new Date()
+  return [
+    { label: 'This month', from: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), to: isoDate(0) },
+    { label: 'Last month', from: ymd(new Date(today.getFullYear(), today.getMonth() - 1, 1)), to: ymd(new Date(today.getFullYear(), today.getMonth(), 0)) },
+    { label: 'Last 7 days', from: isoDate(-6), to: isoDate(0) },
+    { label: 'Last 30 days', from: isoDate(-29), to: isoDate(0) },
+  ]
+}
+const lastMonth = () => presets()[1].from.slice(0, 7)
 
 export default function Reports() {
   const [types, setTypes] = useState([])
   const [type, setType] = useState('sales')
-  const [from, setFrom] = useState(PRESETS[0].from)
-  const [to, setTo] = useState(PRESETS[0].to)
+  const [preset, setPreset] = useState('This month') // a preset's dates are recalculated at download time
+  const [customFrom, setFrom] = useState('')
+  const [customTo, setTo] = useState('')
   const [month, setMonth] = useState(lastMonth)
   const [history, setHistory] = useState([])
   const [error, setError] = useState('')
@@ -30,6 +34,12 @@ export default function Reports() {
     api.reportTypes().then(setTypes).catch((e) => setError(e.message))
     loadHistory()
   }, [])
+
+  const PRESETS = presets()
+  const active = PRESETS.find((p) => p.label === preset)
+  const from = active ? active.from : customFrom
+  const to = active ? active.to : customTo
+  const pickDate = (setter) => (e) => { setFrom(from); setTo(to); setPreset(null); setter(e.target.value) }
 
   const isMonthly = type === 'monthly'
   const invalid = !isMonthly && (!from || !to || to < from)
@@ -83,16 +93,16 @@ export default function Reports() {
                 {PRESETS.map((p) => (
                   <button
                     key={p.label}
-                    onClick={() => { setFrom(p.from); setTo(p.to) }}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium ${from === p.from && to === p.to ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-400'}`}
+                    onClick={() => setPreset(p.label)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium ${preset === p.label ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-400'}`}
                   >
                     {p.label}
                   </button>
                 ))}
               </div>
               <div className="grid max-w-md grid-cols-2 gap-3">
-                <Field label="From"><input type="date" className={inputClass} value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-                <Field label="To"><input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+                <Field label="From"><input type="date" className={inputClass} value={from} onChange={pickDate(setFrom)} /></Field>
+                <Field label="To"><input type="date" className={inputClass} value={to} onChange={pickDate(setTo)} /></Field>
               </div>
               {invalid && <p className="mt-2 text-xs text-red-600">End date must be on or after the start date.</p>}
             </>

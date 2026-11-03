@@ -6,6 +6,7 @@
 * Staff never receive cost/profit figures: they are removed from every JSON response (scrub_costs).
 * The very first visit shows a setup screen that creates the owner account (only while no users exist).
 """
+import os
 import re
 import secrets
 import time
@@ -61,6 +62,9 @@ STAFF_ALLOWED = [
 PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup)")]
 COST_KEYS = {"buying_price", "unit_cost", "profit", "suggested_cost", "total_cost", "margin_pct", "cost",
              "stock_cost_value"}
+# The shop does not show buying prices or anything worked out from them (profit, margin, cost values) to
+# anyone, owners included. Buying prices are still stored so this can be switched back on later.
+HIDDEN_FOR_ALL = COST_KEYS - {"cost"}  # "cost" = SMS cost from Africa's Talking, owners still see it
 
 
 def init_auth(app, db):
@@ -76,6 +80,8 @@ def init_auth(app, db):
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
+        # COOKIE_SECURE=1 on the cloud server (HTTPS only): the login cookie is never sent over plain http
+        SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE") == "1",
         SESSION_COOKIE_NAME="dukabuddy_session",
         PERMANENT_SESSION_LIFETIME=timedelta(hours=SESSION_HOURS),
     )
@@ -109,18 +115,19 @@ def require_login():
     return None
 
 
-def _scrub(value):
+def _scrub(value, keys=COST_KEYS):
     if isinstance(value, dict):
-        return {k: _scrub(v) for k, v in value.items() if k not in COST_KEYS}
+        return {k: _scrub(v, keys) for k, v in value.items() if k not in keys}
     if isinstance(value, list):
-        return [_scrub(v) for v in value]
+        return [_scrub(v, keys) for v in value]
     return value
 
 
 def scrub_costs(response):
     user = g.get("user")
-    if user and user["role"] != "owner" and response.is_json and request.path.startswith("/api/"):
-        response.set_data(jsonify(_scrub(response.get_json())).get_data())
+    if user and response.is_json and request.path.startswith("/api/"):
+        keys = COST_KEYS if user["role"] != "owner" else HIDDEN_FOR_ALL
+        response.set_data(jsonify(_scrub(response.get_json(), keys)).get_data())
     return response
 
 
@@ -141,15 +148,17 @@ def _start_session(u):
 # person's typos lock out the whole shop. Counting per username keeps a lockout to the account being guessed.
 _failures = {}
 MAX_FAILURES, LOCK_SECONDS = 5, 300
+# Online, a password guesser can switch IPs: also lock a username after this many failures from any IPs
+MAX_FAILURES_ANY_IP = 20
 
 
-def _locked(key):
+def _locked(key, limit=MAX_FAILURES):
     recent = [t for t in _failures.get(key, []) if time.time() - t < LOCK_SECONDS]
     if recent:
         _failures[key] = recent
     else:
         _failures.pop(key, None)
-    return len(recent) >= MAX_FAILURES
+    return len(recent) >= limit
 
 
 def _validate(data, require_password=True):
@@ -210,11 +219,13 @@ def login():
     data = request.get_json(silent=True) or {}
     username = str(data.get("username") or "").strip().lower()
     key = f"{request.remote_addr or '?'}|{username}"
-    if _locked(key):
+    any_ip = f"*|{username}"
+    if _locked(key) or _locked(any_ip, MAX_FAILURES_ANY_IP):
         return jsonify(error="Too many wrong passwords for this username. Wait 5 minutes and try again."), 429
     row = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if row is None or not check_password_hash(row["password_hash"], str(data.get("password") or "")):
         _failures.setdefault(key, []).append(time.time())
+        _failures.setdefault(any_ip, []).append(time.time())
         return jsonify(error="Wrong username or password."), 401
     if not row["active"]:
         return jsonify(error="This account has been switched off. Ask the owner."), 403

@@ -12,7 +12,7 @@ export const CLASS_STYLES = {
   'No stock, no sales': 'bg-slate-100 text-slate-600',
 }
 const CLASS_HELP = {
-  'Top performer': 'Top 20% of products by gross profit',
+  'Top performer': 'Top 20% of products by revenue',
   Steady: 'Selling at a healthy rate',
   New: 'Recently added - needs owner verification before restocking',
   'Slow mover': 'Too much stock for how fast it sells',
@@ -40,7 +40,7 @@ export default function Performance({ navigate }) {
     <>
       <PageHeader
         title="Product Performance"
-        subtitle={data ? `Ranked best to worst by gross profit · ${data.window.start} to ${data.window.end}` : 'Tracked automatically from your sales'}
+        subtitle={data ? `Ranked best to worst by revenue · ${data.window.start} to ${data.window.end}` : 'Tracked automatically from your sales'}
         action={
           <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
             {[7, 30, 90].map((d) => (
@@ -94,8 +94,6 @@ export default function Performance({ navigate }) {
                     <th className="whitespace-nowrap px-4 py-3">Class</th>
                     <th className="whitespace-nowrap px-4 py-3 text-right">Units sold</th>
                     <th className="whitespace-nowrap px-4 py-3 text-right">Revenue</th>
-                    <th className="whitespace-nowrap px-4 py-3 text-right">Gross profit</th>
-                    <th className="whitespace-nowrap px-4 py-3 text-right">Margin</th>
                     <th className="whitespace-nowrap px-4 py-3 text-right">In stock</th>
                     <th className="whitespace-nowrap px-4 py-3 text-right">Days of stock</th>
                     <th className="whitespace-nowrap px-4 py-3">Last sold</th>
@@ -112,9 +110,7 @@ export default function Performance({ navigate }) {
                       </td>
                       <td className="px-4 py-3"><ClassBadge value={p.classification} /></td>
                       <td className="px-4 py-3 text-right">{p.units}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right">{ksh(p.revenue)}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-semibold">{ksh(p.profit)}</td>
-                      <td className="px-4 py-3 text-right text-slate-500">{p.margin_pct}%</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-semibold">{ksh(p.revenue)}</td>
                       <td className="px-4 py-3 text-right">{p.quantity}</td>
                       <td className="px-4 py-3 text-right text-slate-500">{p.days_of_cover ?? '—'}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-500">{when(p.last_sold_at)}</td>

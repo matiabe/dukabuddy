@@ -19,8 +19,10 @@ from db import LOCAL_NOW_FUNCTION, IntegrityError, close_db, connect, get_db
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 
 app = Flask(__name__)
-# Behind the nginx container: trust its X-Forwarded-For so login throttling sees the real device IP
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+# Behind the nginx container (and Caddy on a cloud server): trust that many X-Forwarded-For hops so login
+# throttling sees the real device IP. docker-compose.cloud.yml sets TRUSTED_PROXIES=2.
+TRUSTED_PROXIES = int(os.getenv("TRUSTED_PROXIES", "1"))
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=TRUSTED_PROXIES, x_proto=TRUSTED_PROXIES)
 # DEMO_DATA=0 (set in docker-compose.yml) starts a real shop with no sample products/customers/sales
 DEMO_DATA = os.getenv("DEMO_DATA", "1") != "0"
 
@@ -174,6 +176,7 @@ def init_db():
         sms.init_sms(db)  # after users exist: adds users.phone
         debts.init_debts(db)
         backfill_transactions(db)
+        fill_missing_costs(db)
         db.commit()
     finally:
         db.close()
@@ -206,6 +209,24 @@ def seed_automation_demo(db):
                 " VALUES (?, ?, ?, ?, ?, local_now(?))",
                 (pid, q, sell, buy, sell * q, f"-{days_ago} days -2 hours"))
     db.execute("INSERT INTO settings (key, value) VALUES ('demo_automation_seeded', '1')")
+
+
+def fill_missing_costs(db):
+    """One-time fix: products saved without a buying price (0) made every sale look like 100% profit.
+    Apply the shop's 25% markup rule (buying = selling / 1.25) to them and to the past records that copied the 0."""
+    if db.execute("SELECT 1 FROM settings WHERE key = 'costs_filled_25pct_markup'").fetchone():
+        return
+    factor = 1 + product_import.MARKUP
+    db.execute("UPDATE products SET buying_price = ROUND((selling_price / ?)::numeric, 2)"
+               " WHERE buying_price = 0 AND selling_price > 0", (factor,))
+    db.execute("UPDATE sales SET unit_cost = ROUND((unit_price / ?)::numeric, 2)"
+               " WHERE COALESCE(unit_cost, 0) = 0 AND unit_price > 0", (factor,))
+    db.execute("UPDATE restocks SET unit_cost = p.buying_price, total_cost = p.buying_price * restocks.quantity"
+               " FROM products p WHERE p.id = restocks.product_id AND restocks.unit_cost = 0")
+    db.execute("UPDATE purchase_orders SET unit_cost = p.buying_price FROM products p"
+               " WHERE p.id = purchase_orders.product_id AND purchase_orders.unit_cost = 0"
+               " AND purchase_orders.status IN ('pending_review', 'ordered')")
+    db.execute("INSERT INTO settings (key, value) VALUES ('costs_filled_25pct_markup', '1')")
 
 
 def backfill_transactions(db):
@@ -358,8 +379,9 @@ def add_product():
     try:
         name = str(data.get("name", "")).strip()
         category = str(data.get("category") or "General").strip()
-        buying = float(data["buying_price"])
         selling = float(data["selling_price"])
+        # Buying price left blank or 0: work it out from the selling price (25% markup)
+        buying = float(data.get("buying_price") or 0) or product_import.cost_from_selling(selling)
         qty = int(data["quantity"])
         reorder = int(data["reorder_level"])
     except (KeyError, TypeError, ValueError):
@@ -731,13 +753,10 @@ def list_transactions():
     rows = db.execute(TRANSACTION_QUERY + clause + " ORDER BY t.created_at DESC, t.id DESC LIMIT 200", params).fetchall()
     summary = dict(db.execute(
         "SELECT COUNT(*) AS count, COALESCE(SUM(t.total), 0) AS revenue, COALESCE(SUM(t.items_count), 0) AS items,"
-        " COALESCE(SUM(t.discount), 0) AS discounts, COALESCE(AVG(t.total), 0) AS avg_sale,"
+        " COALESCE(SUM(t.discount), 0) AS points_discounts, COALESCE(SUM(t.price_cut), 0) AS price_cuts,"
+        " COALESCE(SUM(t.discount + t.price_cut), 0) AS discounts,"
         " COALESCE(SUM(CASE WHEN t.customer_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS loyalty_sales" + base, params
     ).fetchone())
-    summary["profit"] = db.execute(
-        "SELECT COALESCE(SUM(s.total - COALESCE(s.unit_cost, 0) * s.quantity), 0) FROM sales s WHERE" + in_filtered,
-        params,
-    ).fetchone()[0]
     daily = db.execute(
         "SELECT left(t.created_at, 10) AS day, COUNT(*) AS count, SUM(t.total) AS revenue" + base
         + " GROUP BY day ORDER BY day DESC LIMIT 31", params
@@ -782,7 +801,6 @@ def customer_dict(row):
     d["tier"] = tier_for(d["total_spent"])["name"]
     d["multiplier"] = tier_for(d["total_spent"])["multiplier"]
     d["next_tier"] = next_tier(d["total_spent"])
-    d["avg_basket"] = round(d["total_spent"] / d["visits"], 2) if d["visits"] else 0
     d["points_value"] = d["points"] * POINT_VALUE_KSH
     if d["last_visit"]:
         days = (datetime.now() - datetime.strptime(d["last_visit"], "%Y-%m-%d %H:%M:%S")).days
@@ -914,8 +932,8 @@ def dashboard():
         " FROM transactions WHERE left(created_at, 10) = left(local_now(), 10)"
     ).fetchone()
     inv = db.execute(
-        "SELECT COALESCE(SUM(quantity * buying_price), 0) AS cost_value,"
-        " COALESCE(SUM(quantity * selling_price), 0) AS retail_value FROM products"
+        "SELECT COALESCE(SUM(quantity * selling_price), 0) AS retail_value,"
+        " COALESCE(SUM(quantity), 0) AS units FROM products"
     ).fetchone()
     recent = transaction_dicts(db, db.execute(
         TRANSACTION_QUERY + " ORDER BY t.created_at DESC, t.id DESC LIMIT 5").fetchall())
@@ -941,13 +959,12 @@ def dashboard():
         total_items_sold=all_time["items"],
         total_revenue=all_time["revenue"],
         top_sellers=[dict(r) for r in top],
-        restock_budget=sum(p["suggested_cost"] for p in low),
         total_products=total_products,
         today_sales=today["revenue"],
         today_transactions=today["count"],
         today_items=today["items"],
-        inventory_value=inv["cost_value"],
-        inventory_retail_value=inv["retail_value"],
+        inventory_value=inv["retail_value"],  # at selling price (buying prices are not shown)
+        inventory_units=inv["units"],
         low_stock_count=len(low),
         low_stock=low,
         recent_sales=recent,
@@ -960,8 +977,7 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 @app.get("/api/overview")
 def overview():
-    """What was sold in a period (default: today) and what is in stock now. Cost figures are owner-only
-    (stock_cost_value is in auth.COST_KEYS, so staff never receive it)."""
+    """What was sold in a period (default: today) and what is in stock now (valued at selling price)."""
     db = get_db()
     today = db.execute("SELECT left(local_now(), 10)").fetchone()[0]
     start = request.args.get("from") or today
@@ -990,7 +1006,6 @@ def overview():
     st = db.execute(
         "SELECT COUNT(*) AS products, COALESCE(SUM(quantity), 0) AS units,"
         " COALESCE(SUM(quantity * selling_price), 0) AS retail_value,"
-        " COALESCE(SUM(quantity * buying_price), 0) AS stock_cost_value,"
         " COALESCE(SUM(CASE WHEN quantity = 0 THEN 1 ELSE 0 END), 0) AS out_of_stock,"
         " COALESCE(SUM(CASE WHEN quantity <= reorder_level THEN 1 ELSE 0 END), 0) AS low FROM products").fetchone()
     return jsonify(
@@ -1011,11 +1026,11 @@ def build_inventory_context(db):
             " WHERE created_at >= local_now('-7 days') GROUP BY product_id"
         ).fetchall()
     }
-    lines = ["name | category | qty_in_stock | reorder_level | buying_KSh | selling_KSh | units_sold_last_7_days | LOW?"]
+    lines = ["name | category | qty_in_stock | reorder_level | selling_KSh | units_sold_last_7_days | LOW?"]
     for p in products:
         lines.append(
             f"{p['name']} | {p['category']} | {p['quantity']} | {p['reorder_level']} | "
-            f"{p['buying_price']:.0f} | {p['selling_price']:.0f} | {sales_7d.get(p['id'], 0)} | "
+            f"{p['selling_price']:.0f} | {sales_7d.get(p['id'], 0)} | "
             f"{'YES' if p['quantity'] <= p['reorder_level'] else 'no'}"
         )
     return "\n".join(lines), products, sales_7d
@@ -1027,18 +1042,14 @@ def fallback_recommendation(products, sales_7d):
     if not low:
         return "All products are above their reorder levels. No restocking needed right now."
     lines = ["**Restock recommendations** (rule-based):", ""]
-    total_cost = 0
     for p in sorted(low, key=lambda p: p["quantity"] / max(p["reorder_level"], 1)):
         weekly = sales_7d.get(p["id"], 0)
         target = max(p["reorder_level"] * 2, weekly * 2)
         order_qty = max(target - p["quantity"], 1)
-        cost = order_qty * p["buying_price"]
-        total_cost += cost
         lines.append(
             f"- **{p['name']}**: {p['quantity']} left (reorder at {p['reorder_level']}). "
-            f"Order **{order_qty}** units ≈ KSh {cost:,.0f}."
+            f"Order **{order_qty}** units."
         )
-    lines += ["", f"**Estimated total restock cost: KSh {total_cost:,.0f}**"]
     return "\n".join(lines)
 
 
@@ -1085,8 +1096,8 @@ def assistant():
         "You are the NyamsComm assistant, a friendly, practical helper for NyamsComm Electronics, an electronics dealer shop in Kenya "
         "(phones, laptops, TVs, audio, accessories). "
         "Use ONLY the inventory data provided. All money is in Kenyan Shillings (KSh). "
-        "Be concise: use short bullet points, bold product names, give specific order quantities "
-        "and estimated restock cost (quantity x buying price). Prioritise items at or below reorder level "
+        "Be concise: use short bullet points, bold product names, give specific order quantities. "
+        "Do not mention buying prices, costs, profit or margins. Prioritise items at or below reorder level "
         "and fast sellers. Expensive items (phones, laptops, TVs) tie up a lot of cash, so recommend small, "
         "careful orders for them and point out cheap fast-moving accessories worth bundling. If asked about customers, suggest who to reward with bonus points and who to win back "
         "(at-risk customers). Keep answers under 250 words."

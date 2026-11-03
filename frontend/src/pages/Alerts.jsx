@@ -79,7 +79,7 @@ export default function Alerts() {
     ['monthly_report', 'Email monthly report', 'Full performance report (PDF + Excel) on the 1st of each month.'],
     ['sms_sales', 'SMS every sale', 'Everyone with a phone number gets an SMS for each sale.'],
     ['sms_low_stock', 'SMS low stock', 'SMS when a sale brings a product down to its reorder level.'],
-    ['sms_daily_summary', 'SMS daily summary', 'Evening SMS with sales for the day (owners also see profit).'],
+    ['sms_daily_summary', 'SMS daily summary', 'Evening SMS with sales for the day.'],
   ]
   const numbers = [
     ['new_product_days', 'New product period (days)', 'Products younger than this need your verification.'],

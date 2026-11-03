@@ -17,8 +17,8 @@ bp = Blueprint("reports", __name__)
 all_customers = None  # injected by app.py (customer tier/status logic lives there)
 
 REPORT_TYPES = {
-    "sales": ("Sales Report", "Receipts, revenue, profit, daily totals and payment methods"),
-    "inventory": ("Inventory Report", "Current stock, stock value, low-stock items and restocks received"),
+    "sales": ("Sales Report", "Receipts, revenue, discounts, daily totals and payment methods"),
+    "inventory": ("Inventory Report", "Current stock, stock value at selling price, low-stock items and restocks received"),
     "performance": ("Product Performance Report", "Products ranked best to worst, slow movers and dead stock"),
     "customers": ("Customer & Loyalty Report", "Customer spending, visits, tiers and loyalty points"),
     "restock": ("Restock & Purchase Orders Report", "Purchase orders and deliveries received"),
@@ -41,24 +41,19 @@ def sales_sections(db, start, end):
     a, b = start.strftime(FMT), end.strftime(FMT)
     k = db.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue, COALESCE(SUM(items_count), 0) AS items,"
-        " COALESCE(SUM(discount), 0) AS discounts, COALESCE(AVG(total), 0) AS avg FROM transactions"
+        " COALESCE(SUM(discount), 0) AS points, COALESCE(SUM(price_cut), 0) AS cuts FROM transactions"
         " WHERE created_at >= ? AND created_at < ?", (a, b)).fetchone()
-    profit = db.execute(
-        "SELECT COALESCE(SUM(total - COALESCE(unit_cost, 0) * quantity), 0) FROM sales"
-        " WHERE created_at >= ? AND created_at < ?", (a, b)).fetchone()[0]
+    # Discounts = loyalty points redeemed + prices agreed with customers below the listed price
     kpis = [
-        ("Receipts", f"{k['n']:,}"), ("Revenue", ksh(k["revenue"])), ("Gross profit", ksh(profit)),
-        ("Margin", f"{profit / k['revenue'] * 100:.1f}%" if k["revenue"] else "-"),
-        ("Average sale", ksh(k["avg"])), ("Items sold", f"{k['items']:,}"), ("Points discounts", ksh(k["discounts"])),
+        ("Receipts", f"{k['n']:,}"), ("Revenue", ksh(k["revenue"])), ("Items sold", f"{k['items']:,}"),
+        ("Total discounts", ksh(k["points"] + k["cuts"])), ("Agreed price cuts", ksh(k["cuts"])),
+        ("Points discounts", ksh(k["points"])),
     ]
     daily = db.execute(
-        "SELECT d.day, d.n, d.items, d.revenue, COALESCE(p.profit, 0) AS profit FROM ("
-        "  SELECT left(created_at, 10) AS day, COUNT(*) AS n, SUM(items_count) AS items, SUM(total) AS revenue"
-        "  FROM transactions WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)) d"
-        " LEFT JOIN ("
-        "  SELECT left(created_at, 10) AS day, SUM(total - COALESCE(unit_cost, 0) * quantity) AS profit"
-        "  FROM sales WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)) p ON p.day = d.day"
-        " ORDER BY d.day", (a, b, a, b)).fetchall()
+        "SELECT left(created_at, 10) AS day, COUNT(*) AS n, SUM(items_count) AS items,"
+        " SUM(discount + price_cut) AS discounts, SUM(total) AS revenue"
+        " FROM transactions WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)"
+        " ORDER BY day", (a, b)).fetchall()
     pays = db.execute(
         "SELECT payment_method, COUNT(*) AS n, SUM(total) AS revenue FROM transactions"
         " WHERE created_at >= ? AND created_at < ? GROUP BY payment_method ORDER BY revenue DESC", (a, b)).fetchall()
@@ -68,46 +63,43 @@ def sales_sections(db, start, end):
         " FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id"
         " WHERE t.created_at >= ? AND t.created_at < ? ORDER BY t.created_at LIMIT 1000", (a, b)).fetchall()
     return kpis, [
-        section("Daily sales", [col("Date"), col("Receipts", "int"), col("Items", "int"), col("Revenue", "money"),
-                                col("Gross profit", "money")],
-                [(r["day"], r["n"], r["items"], r["revenue"], r["profit"]) for r in daily]),
+        section("Daily sales", [col("Date"), col("Receipts", "int"), col("Items", "int"), col("Discounts", "money"),
+                                col("Revenue", "money")],
+                [(r["day"], r["n"], r["items"], r["discounts"], r["revenue"]) for r in daily]),
         section("Sales by payment method", [col("Payment method"), col("Receipts", "int"), col("Revenue", "money")],
                 [(r["payment_method"], r["n"], r["revenue"]) for r in pays], sheet="Payment methods"),
         section("All receipts", [col("Receipt", width=0.8), col("Date & time", width=1.1), col("Customer"),
                                  col("Items", width=2.6), col("Payment", width=0.7), col("Discount", "money", 0.8),
                                  col("Total", "money", 0.8)],
                 [(f"DB-{r['id']:05d}", r["created_at"][:16], r["customer"] or "Walk-in", r["items"] or "",
-                  r["payment_method"], r["discount"], r["total"]) for r in receipts]),
+                  r["payment_method"], r["discount"] + r["price_cut"], r["total"]) for r in receipts]),
     ]
 
 
 def inventory_sections(db, start, end):
     a, b = start.strftime(FMT), end.strftime(FMT)
     prods = db.execute("SELECT * FROM products ORDER BY category, name").fetchall()
-    cost = sum(p["quantity"] * p["buying_price"] for p in prods)
     retail = sum(p["quantity"] * p["selling_price"] for p in prods)
     low = [p for p in prods if p["quantity"] <= p["reorder_level"]]
     restocks = db.execute(
         "SELECT r.*, p.name FROM restocks r JOIN products p ON p.id = r.product_id"
         " WHERE r.created_at >= ? AND r.created_at < ? ORDER BY r.created_at", (a, b)).fetchall()
-    kpis = [("Products", str(len(prods))), ("Stock value (cost)", ksh(cost)), ("Stock value (retail)", ksh(retail)),
-            ("Potential profit", ksh(retail - cost)), ("Low-stock items", str(len(low))),
-            ("Restock spend in period", ksh(sum(r["total_cost"] for r in restocks)))]
+    kpis = [("Products", str(len(prods))), ("Stock value (selling price)", ksh(retail)),
+            ("Units in stock", f"{sum(p['quantity'] for p in prods):,}"), ("Low-stock items", str(len(low))),
+            ("Restocks in period", str(len(restocks)))]
     status = lambda p: "Out of stock" if p["quantity"] == 0 else "Low stock" if p["quantity"] <= p["reorder_level"] else "OK"
     return kpis, [
         section("Current stock (as at report date)",
                 [col("Product", width=2), col("Category"), col("In stock", "int", 0.7), col("Reorder at", "int", 0.7),
-                 col("Buying price", "money"), col("Selling price", "money"), col("Value at cost", "money"),
-                 col("Status", width=0.8)],
-                [(p["name"], p["category"], p["quantity"], p["reorder_level"], p["buying_price"], p["selling_price"],
-                  p["quantity"] * p["buying_price"], status(p)) for p in prods], sheet="Current stock"),
+                 col("Selling price", "money"), col("Stock value", "money"), col("Status", width=0.8)],
+                [(p["name"], p["category"], p["quantity"], p["reorder_level"], p["selling_price"],
+                  p["quantity"] * p["selling_price"], status(p)) for p in prods], sheet="Current stock"),
         section("Low-stock items", [col("Product", width=2), col("In stock", "int"), col("Reorder at", "int"),
-                                    col("Buying price", "money")],
-                [(p["name"], p["quantity"], p["reorder_level"], p["buying_price"]) for p in low],
+                                    col("Selling price", "money")],
+                [(p["name"], p["quantity"], p["reorder_level"], p["selling_price"]) for p in low],
                 note=None if low else "No products are at or below their reorder level."),
-        section("Restocks received in period", [col("Date"), col("Product", width=2), col("Quantity", "int"),
-                                                col("Unit cost", "money"), col("Total cost", "money")],
-                [(r["created_at"][:16], r["name"], r["quantity"], r["unit_cost"], r["total_cost"]) for r in restocks],
+        section("Restocks received in period", [col("Date"), col("Product", width=2), col("Quantity", "int")],
+                [(r["created_at"][:16], r["name"], r["quantity"]) for r in restocks],
                 sheet="Restocks received"),
     ]
 
@@ -117,18 +109,16 @@ def performance_sections(db, start, end):
     items = perf["products"]
     kpis = [(c, str(n)) for c, n in perf["summary"].items() if n] + [
         ("Dead stock value", ksh(perf["dead_stock_value"])), ("Slow stock value", ksh(perf["slow_stock_value"]))]
-    rank_rows = [(d["rank"], d["name"], d["classification"], d["units"], d["revenue"], d["profit"], d["margin_pct"],
-                  d["quantity"], d["days_of_cover"] if d["days_of_cover"] is not None else "-",
+    rank_rows = [(d["rank"], d["name"], d["classification"], d["units"], d["revenue"], d["quantity"], d["days_of_cover"] if d["days_of_cover"] is not None else "-",
                   d["days_since_sale"] if d["days_since_sale"] is not None else "never") for d in items]
     attention = [d for d in items if d["classification"] in ("Dead stock", "Slow mover")]
     return kpis, [
-        section("Product ranking - best to worst (by gross profit)",
+        section("Product ranking - best to worst (by revenue)",
                 [col("Rank", "int", 0.5), col("Product", width=2.2), col("Class", width=1.1), col("Units sold", "int", 0.7),
-                 col("Revenue", "money", 0.9), col("Gross profit", "money", 0.9), col("Margin %", "pct", 0.7),
-                 col("In stock", "int", 0.6), col("Days of stock", width=0.8), col("Days since sale", width=0.9)],
+                 col("Revenue", "money", 0.9), col("In stock", "int", 0.6), col("Days of stock", width=0.8), col("Days since sale", width=0.9)],
                 rank_rows, sheet="Product ranking"),
         section("Needs attention - slow movers & dead stock",
-                [col("Product", width=2), col("Class"), col("In stock", "int"), col("Value at cost", "money"),
+                [col("Product", width=2), col("Class"), col("In stock", "int"), col("Stock value", "money"),
                  col("Insight", width=3)],
                 [(d["name"], d["classification"], d["quantity"], d["stock_value"], d["insight"]) for d in attention],
                 note=None if attention else "Every product is selling at a healthy rate.", sheet="Slow and dead stock"),
@@ -171,11 +161,10 @@ def restock_sections(db, start, end):
     label = {"pending_review": "Needs review", "ordered": "Ordered", "received": "Received", "cancelled": "Cancelled"}
     kpis = [("Orders in period", str(len(pos))),
             ("Received", str(sum(1 for p in pos if p["status"] == "received"))),
-            ("Open orders now", str(len(open_pos))),
-            ("Open orders value", ksh(sum(p["quantity"] * p["unit_cost"] for p in open_pos)))]
+            ("Open orders now", str(len(open_pos)))]
     cols = [col("Order", width=0.7), col("Created", width=1.1), col("Product", width=2), col("Quantity", "int", 0.7),
-            col("Est. cost", "money", 0.9), col("Status", width=0.9), col("Source", width=0.6), col("Reason", width=2.4)]
-    row = lambda p: (f"PO-{p['id']:04d}", p["created_at"][:16], p["name"], p["quantity"], p["quantity"] * p["unit_cost"],
+            col("Status", width=0.9), col("Source", width=0.6), col("Reason", width=2.4)]
+    row = lambda p: (f"PO-{p['id']:04d}", p["created_at"][:16], p["name"], p["quantity"],
                      label[p["status"]], p["source"], p["reason"] or "")
     _, inv = inventory_sections(db, start, end)
     return kpis, [section("Purchase orders created in period", cols, [row(p) for p in pos], sheet="Purchase orders"),
@@ -412,7 +401,7 @@ def send_monthly_report(db, month):
         f"<p>Here is how the shop performed in <b>{rep['period']}</b>. The full report is attached as PDF and Excel.</p>"
         + email_table([], [(k, v) for k, v in sales_kpis.items()])
         + "<h3 style='font-size:15px'>Best-performing products</h3>"
-        + email_table(["#", "Product", "Units", "Profit"], [(i + 1, d["name"], d["units"], ksh(d["profit"]))
+        + email_table(["#", "Product", "Units", "Revenue"], [(i + 1, d["name"], d["units"], ksh(d["revenue"]))
                                                            for i, d in enumerate(top)])
         + (f"<h3 style='font-size:15px'>Not selling</h3><p>{len(dead)} product(s) are dead stock, tying up "
            f"<b>{ksh(perf['dead_stock_value'])}</b>: {', '.join(d['name'] for d in dead)}.</p>" if dead else ""))

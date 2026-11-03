@@ -106,7 +106,7 @@ CLASS_ORDER = ["Top performer", "Steady", "New", "Slow mover", "Dead stock", "No
 
 
 def performance(db, days=None, settings=None, start=None, end=None):
-    """Rank every product best -> worst by gross profit in the window and classify it."""
+    """Rank every product best -> worst by revenue in the window and classify it."""
     s = settings or get_settings(db)
     end = end or now()
     if start is None:
@@ -139,11 +139,11 @@ def performance(db, days=None, settings=None, start=None, end=None):
         d["days_since_sale"] = (end - last).days if last else None
         d["daily_rate"] = round(d["units"] / days, 2)
         d["days_of_cover"] = round(d["quantity"] / d["daily_rate"], 1) if d["daily_rate"] > 0 else None
-        d["stock_value"] = d["quantity"] * d["buying_price"]
+        d["stock_value"] = d["quantity"] * d["selling_price"]  # at selling price (buying prices are not shown)
         d["margin_pct"] = round(d["profit"] / d["revenue"] * 100, 1) if d["revenue"] else 0
         items.append(d)
 
-    items.sort(key=lambda d: (d["profit"], d["revenue"], d["units"]), reverse=True)
+    items.sort(key=lambda d: (d["revenue"], d["units"]), reverse=True)
     sellers = [d for d in items if d["units"] > 0]
     top_n = max(1, round(len(sellers) * 0.2)) if sellers else 0
     top_ids = {d["id"] for d in sellers[:top_n]}
@@ -156,7 +156,7 @@ def performance(db, days=None, settings=None, start=None, end=None):
         elif d["quantity"] > 0 and idle >= s["dead_stock_days"]:
             cls, why = "Dead stock", f"No sale in {idle} days; {ksh(d['stock_value'])} tied up"
         elif d["id"] in top_ids:
-            cls, why = "Top performer", f"Top 20% by profit ({ksh(d['profit'])})"
+            cls, why = "Top performer", f"Top 20% by revenue ({ksh(d['revenue'])})"
         elif d["units"] == 0 and d["quantity"] == 0:
             cls, why = "No stock, no sales", "Out of stock and not selling"
         elif d["units"] == 0 or (d["days_of_cover"] or 0) > s["slow_cover_days"]:
@@ -365,13 +365,11 @@ def run_automation(db, trigger="scheduler"):
     summary["needs_review"] = sum(1 for c in created if c[3] == "pending_review")
 
     if created and s["alert_low_stock"]:
-        rows = [(f"PO-{po:04d}", p["name"], p["quantity"], qty, ksh(qty * p["buying_price"]),
+        rows = [(f"PO-{po:04d}", p["name"], p["quantity"], qty,
                  "Ordered (auto)" if st == "ordered" else "Needs your review") for po, p, qty, st in created]
-        total = sum(qty * p["buying_price"] for _, p, qty, _ in created)
         body = email_layout(shop, "Restock orders created", (
-            f"<p>{len(created)} product(s) reached their reorder level. NyamsComm prepared these purchase orders "
-            f"(estimated total <b>{ksh(total)}</b>):</p>"
-            + email_table(["Order", "Product", "In stock", "Order qty", "Est. cost", "Status"], rows)
+            f"<p>{len(created)} product(s) reached their reorder level. NyamsComm prepared these purchase orders:</p>"
+            + email_table(["Order", "Product", "In stock", "Order qty", "Status"], rows)
             + "<p>Open <b>Auto Restock</b> in NyamsComm to approve new-product orders and mark deliveries as received.</p>"))
         if send_email(db, "low_stock", f"{len(created)} restock order(s) created", body,
                       ref_key="po:" + ",".join(str(c[0]) for c in created)):
@@ -388,7 +386,7 @@ def run_automation(db, trigger="scheduler"):
                 f"<p>These products have been on the shelf for {s['dead_stock_days']}+ days without a sale, "
                 f"tying up <b>{ksh(sum(d['stock_value'] for d in dead))}</b>. Consider a discount, bundle or "
                 f"stopping re-orders.</p>"
-                + email_table(["Product", "In stock", "Days since last sale", "Value at cost"], rows)))
+                + email_table(["Product", "In stock", "Days since last sale", "Value at selling price"], rows)))
             if send_email(db, "dead_stock", f"{len(dead)} product(s) not selling", body,
                           ref_key=f"dead:{week}", dedupe_hours=24 * 7):
                 summary["alerts"] += 1

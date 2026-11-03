@@ -54,6 +54,47 @@ docker compose down               # stop NyamsComm (data is kept)
 ```
 **`reset-database.bat`** deletes ALL data (asks you to type DELETE first) for a completely fresh start.
 
+## Hosting online (cloud server, open from anywhere)
+Runs the same Docker setup on a rented Linux server, so the owner and staff can log in from any phone or laptop with
+internet, at an `https://` address. Logins work exactly as in the shop. **Caddy** (`docker-compose.cloud.yml`,
+`deploy/Caddyfile`) is the only part open to the internet: it gets a free HTTPS certificate and renews it by itself.
+
+**You need:** a VPS with **Ubuntu 24.04**, 2 GB RAM, about $5-6/month (e.g. Hetzner CX22 or DigitalOcean Basic).
+A domain such as `shop.nyamscomm.co.ke` is optional: without one you get a free `<server-ip>.sslip.io` address.
+
+1. **Create the server** at the provider (Ubuntu 24.04, add your SSH key or a root password). Note its IP address.
+2. **Domain (optional):** in your domain's DNS settings, add an **A record** pointing `shop` (or `@`) to the server IP.
+3. **Set up the server** from a terminal on your computer:
+   ```bash
+   ssh root@<server-ip>
+   git clone https://github.com/matiabe/dukabuddy.git /opt/nyamscomm
+   cd /opt/nyamscomm && bash deploy/setup-server.sh shop.nyamscomm.co.ke   # or leave out the domain
+   ```
+   This installs Docker, opens only the SSH and web ports in the firewall, creates `.env` with a random database
+   password, adds a daily 02:00 backup and starts the database. It does **not** open the website yet.
+4. **Move the shop's data over.** On the shop computer run `backup.bat`, then copy the file to the server and restore it:
+   ```bash
+   scp backups\dukabuddy_2026-11-03_1800.sql root@<server-ip>:/root/
+   ssh root@<server-ip> "cd /opt/nyamscomm && bash deploy/restore.sh /root/dukabuddy_2026-11-03_1800.sql"
+   ```
+   The restore starts the website. Open `https://<your domain>` and log in with your usual username and password.
+   If you start the server with no data instead, create the owner account **right away**: until an account exists,
+   anyone who opens the address could create it.
+5. **Switch the shop over:** on the shop computer run `docker compose down`. If the shop computer and the server both
+   run, staff would record sales in two places and SMS/email alerts would be sent twice. Bookmark the new address on every device.
+6. **SMS, email, AI (optional):** on the server, `nano /opt/nyamscomm/backend/.env`, then `docker compose up -d`.
+
+**On the server** (`cd /opt/nyamscomm` first):
+| | |
+|---|---|
+| `bash deploy/update.sh` | Get the latest code from GitHub and rebuild (takes a backup first, keeps all data) |
+| `bash deploy/backup.sh` | Backup now. Daily backups are in `/opt/nyamscomm/backups` (kept 30 days) |
+| `scp root@<server-ip>:/opt/nyamscomm/backups/*.sql.gz .` | Run on your own computer: download the backups. Do this weekly. |
+| `bash deploy/restore.sh <file>` | Replace the server's data with a backup (`.sql` or `.sql.gz`) |
+| `docker compose ps` / `docker compose logs -f backend` | Is it running? / backend log |
+
+The repository is public, so keep passwords and keys only in the `.env` files on the server (git never uploads them).
+
 ## Logins and roles
 Everyone logs in with their own username and password. Sessions last 12 hours. After 5 wrong passwords for a username, that username must wait 5 minutes (other staff are not affected).
 

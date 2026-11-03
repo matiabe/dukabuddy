@@ -106,7 +106,6 @@ export default function Customers() {
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3 text-right">Visits</th>
                 <th className="px-5 py-3 text-right">Total spent</th>
-                <th className="px-5 py-3 text-right">Avg basket</th>
                 <th className="px-5 py-3">Last visit</th>
                 <th className="px-5 py-3 text-right">Points</th>
               </tr>
@@ -122,13 +121,12 @@ export default function Customers() {
                   <td className="px-5 py-3"><StatusBadge status={c.status} /></td>
                   <td className="px-5 py-3 text-right">{c.visits}</td>
                   <td className="px-5 py-3 text-right font-semibold">{ksh(c.total_spent)}</td>
-                  <td className="px-5 py-3 text-right">{ksh(c.avg_basket)}</td>
                   <td className="whitespace-nowrap px-5 py-3 text-slate-500">{when(c.last_visit)}</td>
                   <td className="px-5 py-3 text-right font-semibold text-emerald-700">{c.points}</td>
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={8} className="px-5 py-6 text-center text-slate-500">No customers found.</td></tr>
+                <tr><td colSpan={7} className="px-5 py-6 text-center text-slate-500">No customers found.</td></tr>
               )}
             </tbody>
           </table>
@@ -169,7 +167,6 @@ function CustomerDetail({ id, onBack }) {
   const stats = [
     ['Visits', c.visits, `${c.visits_30d} in last 30 days`],
     ['Total spent', ksh(c.total_spent), `${c.items_bought} items bought`],
-    ['Avg basket', ksh(c.avg_basket), 'per visit'],
     ['Last visit', c.days_since_visit === null ? 'Never' : c.days_since_visit === 0 ? 'Today' : `${c.days_since_visit} days ago`, data.favourite_day ? `Usually shops on ${data.favourite_day}` : ''],
     ['Points', c.points, `worth ${ksh(c.points_value)}`],
   ]

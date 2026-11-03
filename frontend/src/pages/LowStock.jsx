@@ -29,7 +29,6 @@ export default function LowStock({ navigate }) {
     }
   }
 
-  const budget = items?.reduce((sum, p) => sum + p.suggested_cost, 0) || 0
 
   return (
     <>
@@ -47,9 +46,6 @@ export default function LowStock({ navigate }) {
         <Card className="mb-4 flex flex-wrap items-center justify-between gap-2 p-4">
           <p className="text-sm text-slate-600">
             <span className="font-semibold text-slate-900">{items.length} products</span> need restocking
-          </p>
-          <p className="text-sm text-slate-600">
-            Estimated restock budget: <span className="font-bold text-slate-900">{ksh(budget)}</span>
           </p>
         </Card>
       )}
@@ -82,7 +78,7 @@ export default function LowStock({ navigate }) {
                 <dt className="text-slate-500">Last sold</dt><dd className="text-right font-medium">{when(p.last_sold_at)}</dd>
                 <dt className="text-slate-500">Last restocked</dt><dd className="text-right font-medium">{when(p.last_restocked_at)}</dd>
                 <dt className="text-slate-500">Suggested order</dt>
-                <dd className="text-right font-semibold text-emerald-700">{p.suggested_order} units · {ksh(p.suggested_cost)}</dd>
+                <dd className="text-right font-semibold text-emerald-700">{p.suggested_order} units</dd>
               </dl>
               <Button className="mt-4 w-full" onClick={() => restock(p)}>
                 <PackagePlus size={16} /> Mark as restocked
@@ -104,8 +100,6 @@ export default function LowStock({ navigate }) {
                 <th className="px-5 py-3">Date</th>
                 <th className="px-5 py-3">Product</th>
                 <th className="px-5 py-3 text-right">Qty bought</th>
-                <th className="px-5 py-3 text-right">Unit cost</th>
-                <th className="px-5 py-3 text-right">Total cost</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -114,12 +108,10 @@ export default function LowStock({ navigate }) {
                   <td className="whitespace-nowrap px-5 py-3 text-slate-500">{when(r.created_at)}</td>
                   <td className="px-5 py-3 font-medium text-slate-800">{r.product_name}</td>
                   <td className="px-5 py-3 text-right">{r.quantity}</td>
-                  <td className="px-5 py-3 text-right">{ksh(r.unit_cost)}</td>
-                  <td className="px-5 py-3 text-right font-semibold">{ksh(r.total_cost)}</td>
                 </tr>
               ))}
               {history.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-6 text-center text-slate-500">No restocks recorded yet.</td></tr>
+                <tr><td colSpan={3} className="px-5 py-6 text-center text-slate-500">No restocks recorded yet.</td></tr>
               )}
             </tbody>
           </table>

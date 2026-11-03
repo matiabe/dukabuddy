@@ -174,15 +174,26 @@ def parse(filename, data):
     return columns, items, errors
 
 
+MARKUP = 0.25  # shop rule: selling price is the buying price plus 25%
+
+
+def cost_from_selling(selling):
+    """Buying price implied by the 25% markup rule (KSh 1,000 selling -> KSh 800 buying)."""
+    return round(float(selling) / (1 + MARKUP), 2)
+
+
 def apply(db, items, commit):
     """Classify items as new/updated (and save them when commit=True)."""
     existing = {r["name"].lower(): dict(r) for r in db.execute("SELECT * FROM products").fetchall()}
     created, updated, unchanged = [], [], 0
-    fields = ("category", "buying_price", "selling_price", "quantity", "reorder_level")
+    fields = ("category", "selling_price", "quantity", "reorder_level")  # buying price is saved but not shown
     for it in items:
         old = existing.get(it["name"].lower())
-        if it["buying_price"] is None:  # selling-price-only sheet
-            it = {**it, "buying_price": old["buying_price"] if old else 0, "cost_missing": old is None}
+        if not it["buying_price"]:  # selling-price-only sheet: keep a known cost, else apply the 25% rule
+            if old and old["buying_price"]:
+                it = {**it, "buying_price": old["buying_price"]}
+            else:
+                it = {**it, "buying_price": cost_from_selling(it["selling_price"]), "cost_estimated": True}
         if old is None:
             created.append(it)
             if commit:

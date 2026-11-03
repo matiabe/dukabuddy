@@ -6,8 +6,8 @@ import { Alert, Button, Card, Field, PageHeader, inputClass } from '../component
 
 const EMPTY = { name: '', username: '', password: '', role: 'staff', phone: '' }
 const ROLE_INFO = {
-  staff: 'New Sale, Sales History, Products, Customers, receiving stock. No buying prices, profits, reports or settings.',
-  owner: 'Everything, including profits, reports, prices, product import, settings and staff accounts.',
+  staff: 'New Sale, Sales History, Products, Customers, receiving stock. No reports or settings.',
+  owner: 'Everything, including reports, prices, product import, settings and staff accounts.',
 }
 
 export default function Users() {

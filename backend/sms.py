@@ -2,7 +2,7 @@
 
 * Every active user with a phone number gets: an SMS for each sale, an SMS when a product drops to its
   reorder level, and an evening summary of the day.
-* Staff messages never contain profit (same rule as the web app); owners get profit in the daily summary.
+* Messages never contain profit or buying prices (same rule as the web app).
 * Sending runs in a background thread so the till is never slowed down by the SMS service.
 * Without AT_USERNAME / AT_API_KEY in backend/.env, messages are only saved to the SMS log (status "logged").
 """
@@ -206,7 +206,7 @@ def notify_sale(db, tid):
 
 
 def daily_summary(db, day=None, force=False):
-    """Evening summary for `day` (YYYY-MM-DD, default today). Owners also get profit."""
+    """Evening summary for `day` (YYYY-MM-DD, default today)."""
     day = day or datetime.now().strftime("%Y-%m-%d")
     key = f"summary:{day}"
     if not force and already_sent(db, key):
@@ -217,9 +217,6 @@ def daily_summary(db, day=None, force=False):
     s = _settings(db)
     t = db.execute("SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue FROM transactions"
                    " WHERE left(created_at, 10) = ?", (day,)).fetchone()
-    profit = db.execute("SELECT COALESCE(SUM(s.total - COALESCE(s.unit_cost, 0) * s.quantity), 0) FROM sales s"
-                        " JOIN transactions t ON t.id = s.transaction_id WHERE left(t.created_at, 10) = ?",
-                        (day,)).fetchone()[0]
     top = db.execute("SELECT p.name, SUM(s.quantity) AS units FROM sales s JOIN transactions t"
                      " ON t.id = s.transaction_id JOIN products p ON p.id = s.product_id"
                      " WHERE left(t.created_at, 10) = ? GROUP BY p.id ORDER BY units DESC LIMIT 1", (day,)).fetchone()
@@ -227,7 +224,7 @@ def daily_summary(db, day=None, force=False):
     shop = s["shop_name"].split()[0] if s["shop_name"] else "Shop"
     base = f"{shop} {day[8:10]}/{day[5:7]}: {t['n']} sale(s), total {ksh(t['revenue'])}"
     tail = (f". Top: {top['name'][:30]} ({top['units']})" if top else "") + f". Low stock items: {low}."
-    msgs = [(u, base + (f", profit {ksh(profit)}" if u["role"] == "owner" else "") + tail) for u in people]
+    msgs = [(u, base + tail) for u in people]
     return send(db, "summary", msgs, ref_key=key)
 
 

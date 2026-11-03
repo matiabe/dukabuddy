@@ -46,7 +46,7 @@ export default function Overview({ navigate }) {
     { label: 'Items sold', value: s.items.toLocaleString(), sub: `${data.sold_items.length} different product(s)`, icon: ShoppingBag, color: 'bg-sky-100 text-sky-600' },
     {
       label: 'Stock value now', value: ksh(st.retail_value),
-      sub: `${st.units.toLocaleString()} units · at selling price${isOwner ? ` · cost ${ksh(st.stock_cost_value)}` : ''}`,
+      sub: `${st.units.toLocaleString()} units · at selling price`,
       icon: Boxes, color: 'bg-violet-100 text-violet-600',
     },
     { label: 'Out of stock', value: st.out_of_stock, sub: `${st.low} at or below reorder level · ${st.products} products`, icon: PackageX, color: 'bg-amber-100 text-amber-600' },

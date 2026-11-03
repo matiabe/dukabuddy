@@ -45,7 +45,7 @@ services:
     container_name: dukabuddy-web
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-80}:80"     # reachable by staff devices on the shop Wi-Fi
+      - "${APP_PORT:-80}:80"     # reachable by staff devices on the shop Wi-Fi (docker-compose.cloud.yml hides it behind Caddy)
     depends_on:
       - backend
 

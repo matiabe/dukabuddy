@@ -5,7 +5,7 @@ import { Alert, Button, Card, Field, PageHeader, StockBadge, inputClass } from '
 import ImportProducts from '../components/ImportProducts.jsx'
 import { useAuth } from '../auth.jsx'
 
-const EMPTY = { name: '', category: '', buying_price: '', selling_price: '', quantity: '', reorder_level: '' }
+const EMPTY = { name: '', category: '', selling_price: '', quantity: '', reorder_level: '' }
 
 export default function Products() {
   const { isOwner } = useAuth()
@@ -92,9 +92,6 @@ export default function Products() {
             <Field label="Category">
               <input className={inputClass} value={form.category} onChange={set('category')} placeholder="e.g. Phones" />
             </Field>
-            <Field label="Buying price (KSh)">
-              <input type="number" min="0" step="0.01" className={inputClass} value={form.buying_price} onChange={set('buying_price')} required />
-            </Field>
             <Field label="Selling price (KSh)">
               <input type="number" min="0" step="0.01" className={inputClass} value={form.selling_price} onChange={set('selling_price')} required />
             </Field>
@@ -124,7 +121,6 @@ export default function Products() {
               <tr>
                 <th className="px-5 py-3">Product</th>
                 <th className="px-5 py-3">Category</th>
-                {isOwner && <th className="px-5 py-3 text-right">Buying</th>}
                 <th className="px-5 py-3 text-right">Selling</th>
                 <th className="px-5 py-3 text-right">Stock</th>
                 <th className="px-5 py-3 text-right">Reorder at</th>
@@ -140,7 +136,6 @@ export default function Products() {
                 <tr key={p.id} className={p.low_stock ? 'bg-amber-50/40' : ''}>
                   <td className="px-5 py-3 font-medium text-slate-800">{p.name}</td>
                   <td className="px-5 py-3 text-slate-500">{p.category}</td>
-                  {isOwner && <td className="px-5 py-3 text-right">{ksh(p.buying_price)}</td>}
                   <td className="px-5 py-3 text-right">{ksh(p.selling_price)}</td>
                   <td className="px-5 py-3 text-right font-semibold">{p.quantity}</td>
                   <td className="px-5 py-3 text-right text-slate-500">{p.reorder_level}</td>

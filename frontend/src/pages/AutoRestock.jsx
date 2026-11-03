@@ -161,7 +161,7 @@ export default function AutoRestock({ navigate }) {
                 {p.open_order ? (
                   <p className="mt-3 text-xs font-medium text-violet-700">Open order: {p.open_order.quantity} units ({STATUS[p.open_order.status][0]})</p>
                 ) : p.recommendation === 'Restock' ? (
-                  <Button className="mt-3 w-full" onClick={() => orderNew(p)}>Order {p.suggested_qty} units · {ksh(p.suggested_cost)}</Button>
+                  <Button className="mt-3 w-full" onClick={() => orderNew(p)}>Order {p.suggested_qty} units</Button>
                 ) : null}
               </div>
             ))}
@@ -187,7 +187,6 @@ export default function AutoRestock({ navigate }) {
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3">Product</th>
                 <th className="px-4 py-3 text-right">Qty</th>
-                <th className="px-4 py-3 text-right">Est. cost</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Reason</th>
                 <th className="px-4 py-3"></th>
@@ -203,7 +202,6 @@ export default function AutoRestock({ navigate }) {
                     <p className="text-xs text-slate-400">Now in stock: {o.current_stock} · reorder at {o.reorder_level}</p>
                   </td>
                   <td className="px-4 py-3 text-right">{o.quantity}</td>
-                  <td className="px-4 py-3 text-right">{ksh(o.total_cost)}</td>
                   <td className="px-4 py-3"><span className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS[o.status][1]}`}>{STATUS[o.status][0]}</span></td>
                   <td className="max-w-64 px-4 py-3 text-xs text-slate-500">{o.reason} <span className="text-slate-400">({o.source})</span></td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
@@ -219,7 +217,7 @@ export default function AutoRestock({ navigate }) {
                   </td>
                 </tr>
               ))}
-              {orders.length === 0 && <tr><td colSpan={8} className="px-5 py-6 text-center text-slate-500">No purchase orders.</td></tr>}
+              {orders.length === 0 && <tr><td colSpan={7} className="px-5 py-6 text-center text-slate-500">No purchase orders.</td></tr>}
             </tbody>
           </table>
         </div>

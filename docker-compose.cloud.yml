@@ -1,0 +1,37 @@
+# Extra settings for running NyamsComm on a cloud server (VPS) on the internet.
+# Used together with docker-compose.yml: deploy/setup-server.sh puts
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.cloud.yml
+# in .env, so a plain `docker compose up -d --build` uses both files.
+#
+# Caddy is the only thing reachable from the internet (ports 80 + 443). It gets a free HTTPS certificate
+# for DOMAIN from Let's Encrypt, renews it automatically and forwards everything to the web container.
+services:
+  caddy:
+    image: caddy:2
+    container_name: dukabuddy-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. DOMAIN=shop.nyamscomm.co.ke}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # HTTPS certificates
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  web:
+    ports: !override
+      - "127.0.0.1:8080:80"   # not public: only Caddy (and this server itself) can reach it
+
+  backend:
+    environment:
+      COOKIE_SECURE: "1"      # login cookie only over HTTPS
+      TRUSTED_PROXIES: "2"    # Caddy -> nginx -> backend
+
+volumes:
+  caddy_data:
+  caddy_config:
