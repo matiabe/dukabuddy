@@ -103,6 +103,8 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 | Shop Overview, New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
 | Products: view, search, **Restock** (receive deliveries) | ✓ | ✓ |
 | **Debtors & Creditors**: add, record payments, update and correct amounts | ✓ | ✓ |
+| **Send money to boss** (their own sales) | ✓ | ✓ |
+| **Money Handover**: see money sent and still with staff, confirm received / report a problem | ✓ | |
 | Buying prices, profit, margins, stock value | ✓ | hidden |
 | Add products, Excel import, bonus points, remove a sale | ✓ | |
 | Dashboard, Restocking, Auto Restock, Performance, Reports, AI Assistant, Alerts & Settings | ✓ | |
@@ -111,6 +113,12 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 **Debtors & Creditors** keeps two lists: customers who owe the shop (*Debtors*) and suppliers the shop owes (*Creditors*).
 Open a record to log a payment, add more owed, or correct the amount (a reason is required). Every change is saved in the
 record's history with who made it and when. Only records with a balance of KSh 0 can be deleted.
+
+**Money handover:** every sale goes into the seller's open *session* (it starts by itself at their first sale). On
+**Send money to boss** they see what they collected (Cash, M-Pesa, Card; Credit sales are not counted as collected), enter
+the amount they are sending, how (cash handed over, M-Pesa or bank) and the M-Pesa code. Sending a different amount needs
+a note. Owners with a phone number get an SMS. The **Money Handover** page (and a banner on the Dashboard) shows money
+waiting for confirmation and money still with staff. Open a handover to mark it **Received** or report a **Problem**.
 
 Every receipt records **who served** the customer. Switching an account off or resetting its password logs that person out on every device straight away.
 Forgot the owner password? Another owner can reset it. If there is no other owner, run `reset-database.bat` (this deletes everything, so restore from a backup afterwards).

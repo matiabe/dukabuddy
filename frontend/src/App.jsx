@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { BellRing, Bot, FileBarChart, HandCoins, History, KeyRound, LayoutDashboard, LogOut, Menu, Package, RefreshCcw, ShoppingCart, Smartphone, Store, TrendingUp, TriangleAlert, UserCog, Users, X } from 'lucide-react'
+import { Banknote, BellRing, Bot, FileBarChart, HandCoins, History, KeyRound, LayoutDashboard, LogOut, Menu, Package, RefreshCcw, ShoppingCart, Smartphone, Store, TrendingUp, TriangleAlert, UserCog, Users, X } from 'lucide-react'
 import Dashboard from './pages/Dashboard.jsx'
 import Overview from './pages/Overview.jsx'
 import Products from './pages/Products.jsx'
@@ -8,6 +8,7 @@ import LowStock from './pages/LowStock.jsx'
 import Assistant from './pages/Assistant.jsx'
 import Customers from './pages/Customers.jsx'
 import Debts from './pages/Debts.jsx'
+import Handover from './pages/Handover.jsx'
 import SalesHistory from './pages/SalesHistory.jsx'
 import Performance from './pages/Performance.jsx'
 import AutoRestock from './pages/AutoRestock.jsx'
@@ -28,6 +29,7 @@ const NAV = [
   { id: 'products', label: 'Products', icon: Package, page: Products, section: 'Shop', staff: true },
   { id: 'customers', label: 'Customers', icon: Users, page: Customers, section: 'Shop', staff: true },
   { id: 'debts', label: 'Debtors & Creditors', icon: HandCoins, page: Debts, section: 'Shop', staff: true },
+  { id: 'handover', label: 'Money Handover', staffLabel: 'Send money to boss', icon: Banknote, page: Handover, section: 'Shop', staff: true },
   { id: 'lowstock', label: 'Restocking', icon: TriangleAlert, page: LowStock, section: 'Stock' },
   { id: 'autorestock', label: 'Auto Restock', icon: RefreshCcw, page: AutoRestock, section: 'Stock' },
   { id: 'performance', label: 'Performance', icon: TrendingUp, page: Performance, section: 'Insights' },
@@ -113,7 +115,7 @@ function Shell({ auth }) {
           <Brand dark onClick={() => go('overview')} />
         </div>
         <nav className="space-y-0.5 overflow-y-auto px-3 pb-4" style={{ maxHeight: 'calc(100vh - 13rem)' }}>
-          {nav.map(({ id, label, icon: Icon, section }, i) => (
+          {nav.map(({ id, label, staffLabel, icon: Icon, section }, i) => (
             <div key={id}>
             {section !== nav[i - 1]?.section && (
               <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{section}</p>
@@ -125,7 +127,7 @@ function Shell({ auth }) {
               }`}
             >
               <Icon size={18} />
-              {label}
+              {(!auth.isOwner && staffLabel) || label}
             </button>
             </div>
           ))}

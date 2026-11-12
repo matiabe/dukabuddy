@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Boxes, Package, Receipt, RefreshCw, TriangleAlert, Wallet } from 'lucide-react'
+import { Banknote, Boxes, Package, Receipt, RefreshCw, TriangleAlert, Wallet } from 'lucide-react'
 import { api, ksh, when } from '../api.js'
 import { Alert, Button, Card, PageHeader, StatusBadge, StockBadge, TierBadge } from '../components/ui.jsx'
 
@@ -34,6 +34,16 @@ export default function Dashboard({ navigate }) {
 
       {data && (
         <>
+          {data.pending_handovers?.count > 0 && (
+            <button onClick={() => navigate('handover')} className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-left text-sm text-amber-900 hover:bg-amber-100">
+              <Banknote size={20} className="shrink-0" />
+              <span className="flex-1">
+                <span className="font-semibold">{ksh(data.pending_handovers.amount)}</span> sent to you by staff
+                ({data.pending_handovers.count} handover{data.pending_handovers.count === 1 ? '' : 's'}) is waiting for you to confirm.
+              </span>
+              <span className="font-medium">Check →</span>
+            </button>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {stats.map(({ label, value, sub, icon: Icon, color }) => (
               <Card key={label} className="p-5">

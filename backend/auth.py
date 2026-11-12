@@ -57,6 +57,9 @@ STAFF_ALLOWED = [
     ("POST", r"/api/debts(/\d+/entries)?"),
     ("PUT", r"/api/debts/\d+"),
     ("DELETE", r"/api/debts/\d+"),
+    # money handover: everyone sends their own session's money; only owners list and confirm
+    ("GET", r"/api/handover/current"),
+    ("POST", r"/api/handover/send"),
     ("POST", r"/api/auth/password"),
 ]
 PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup)")]
