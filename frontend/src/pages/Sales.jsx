@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { Gift, Minus, Plus, Receipt, Search, ShoppingCart, Trash2 } from 'lucide-react'
+import { Gift, Minus, Plus, Receipt, RotateCcw, Search, ShoppingCart, Trash2 } from 'lucide-react'
 import { api, ksh } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import ReceiptModal from '../components/Receipt.jsx'
@@ -14,7 +14,8 @@ export default function Sales({ navigate }) {
   const [products, setProducts] = useState([])
   const [customers, setCustomers] = useState([])
   const [query, setQuery] = useState('')
-  const [cart, setCart] = useState([]) // [{ product, qty }]
+  // [{ product, qty, price }]: qty and price may be '' while being typed; price defaults to the marked price
+  const [cart, setCart] = useState([])
   const [customerId, setCustomerId] = useState('')
   const [redeem, setRedeem] = useState('')
   const [method, setMethod] = useState('Cash')
@@ -39,38 +40,59 @@ export default function Sales({ navigate }) {
     [products, query],
   )
 
-  const inCart = (id) => cart.find((l) => l.product.id === id)?.qty || 0
+  const inCart = (id) => Number(cart.find((l) => l.product.id === id)?.qty) || 0
+  const qtyOf = (l) => Number(l.qty) || 0
+  const priceOf = (l) => (l.price === '' ? 0 : Number(l.price) || 0)
+  const round2 = (n) => Math.round(n * 100) / 100
 
   const add = (p) => {
     setError('')
     if (inCart(p.id) >= p.quantity) return setError(`Only ${p.quantity} of ${p.name} in stock.`)
     setCart((c) =>
       c.some((l) => l.product.id === p.id)
-        ? c.map((l) => (l.product.id === p.id ? { ...l, qty: l.qty + 1 } : l))
-        : [...c, { product: p, qty: 1 }],
+        ? c.map((l) => (l.product.id === p.id ? { ...l, qty: qtyOf(l) + 1 } : l))
+        : [...c, { product: p, qty: 1, price: p.selling_price }],
     )
   }
-  const setQty = (id, qty) => {
+  const updateLine = (id, change) => setCart((c) => c.map((l) => (l.product.id === id ? { ...l, ...change } : l)))
+  const remove = (id) => setCart((c) => c.filter((l) => l.product.id !== id))
+  // Typing: allow an empty box for a moment (so the number can be replaced); never above the stock
+  const typeQty = (l, value) => {
     setError('')
-    setCart((c) =>
-      c
-        .map((l) => (l.product.id === id ? { ...l, qty: Math.max(0, Math.min(Number(qty) || 0, l.product.quantity)) } : l))
-        .filter((l) => l.qty > 0),
-    )
+    if (value === '') return updateLine(l.product.id, { qty: '' })
+    const n = Math.floor(Number(value))
+    if (!Number.isFinite(n) || n < 0) return
+    if (n > l.product.quantity) setError(`Only ${l.product.quantity} of ${l.product.name} in stock.`)
+    updateLine(l.product.id, { qty: Math.min(n, l.product.quantity) })
+  }
+  const stepQty = (l, delta) => {
+    setError('')
+    const n = qtyOf(l) + delta
+    if (n <= 0) return remove(l.product.id)
+    if (n > l.product.quantity) return setError(`Only ${l.product.quantity} of ${l.product.name} in stock.`)
+    updateLine(l.product.id, { qty: n })
+  }
+  const typePrice = (l, value) => {
+    setError('')
+    if (value !== '' && !(Number(value) >= 0)) return
+    updateLine(l.product.id, { price: value })
   }
 
-  const subtotal = cart.reduce((n, l) => n + l.qty * l.product.selling_price, 0)
-  const items = cart.reduce((n, l) => n + l.qty, 0)
+  const subtotal = round2(cart.reduce((n, l) => n + qtyOf(l) * priceOf(l), 0))
+  const marked = round2(cart.reduce((n, l) => n + qtyOf(l) * l.product.selling_price, 0))
+  const priceEdits = round2(marked - subtotal) // > 0: sold below the marked prices
+  const items = cart.reduce((n, l) => n + qtyOf(l), 0)
+  const badLine = cart.some((l) => qtyOf(l) <= 0 || l.price === '')
   const customer = customers.find((c) => String(c.id) === String(customerId))
   const maxRedeem = customer ? Math.min(customer.points, Math.floor(subtotal)) : 0
   const discount = customer ? Math.min(Number(redeem) || 0, maxRedeem) : 0
-  const total = subtotal - discount // at the marked prices
+  const total = round2(subtotal - discount) // at the prices on the cart lines
   // Amount received: below the total = price agreed with the customer; above it = change (cash only)
   const received = cash !== ''
   const cashNum = Number(cash) || 0
-  const priceCut = received && cashNum > 0 && cashNum < total ? total - cashNum : 0
-  const toPay = total - priceCut
-  const change = method === 'Cash' && received ? Math.max(0, cashNum - total) : 0
+  const priceCut = received && cashNum > 0 && cashNum < total ? round2(total - cashNum) : 0
+  const toPay = round2(total - priceCut)
+  const change = method === 'Cash' && received ? round2(Math.max(0, cashNum - total)) : 0
   const badAmount = received && (cashNum <= 0 || (method !== 'Cash' && cashNum > total))
   const pointsToEarn = customer ? Math.floor(Math.floor(toPay / 100) * customer.multiplier) : 0
 
@@ -90,9 +112,10 @@ export default function Sales({ navigate }) {
       receipt_no: '(preview)',
       created_at: new Date().toLocaleString('en-KE'),
       items: cart.map((l) => ({
-        product_id: l.product.id, product_name: l.product.name, quantity: l.qty, unit_price: l.product.selling_price,
+        product_id: l.product.id, product_name: l.product.name, quantity: qtyOf(l), unit_price: priceOf(l),
+        list_price: l.product.selling_price,
       })),
-      subtotal, discount, points_redeemed: discount, total: toPay, price_cut: priceCut,
+      subtotal, discount, points_redeemed: discount, total: toPay, price_cut: priceCut, price_edits: priceEdits,
       payment_method: method,
       amount_paid: received ? cashNum : toPay,
       change_given: change,
@@ -110,7 +133,7 @@ export default function Sales({ navigate }) {
     setSaving(true)
     try {
       const res = await api.checkout({
-        items: cart.map((l) => ({ product_id: l.product.id, quantity: l.qty })),
+        items: cart.map((l) => ({ product_id: l.product.id, quantity: qtyOf(l), unit_price: priceOf(l) })),
         customer_id: customerId || null,
         redeem_points: discount,
         payment_method: method,
@@ -203,21 +226,43 @@ export default function Sales({ navigate }) {
 
           <div className="max-h-72 flex-1 divide-y divide-slate-100 overflow-y-auto">
             {cart.length === 0 && <p className="px-5 py-8 text-center text-sm text-slate-400">Tap a product to add it.</p>}
-            {cart.map(({ product: p, qty }) => (
-              <div key={p.id} className="flex items-center gap-2 px-5 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-800">{p.name}</p>
-                  <p className="text-xs text-slate-400">{ksh(p.selling_price)} each</p>
+            {cart.map((l) => {
+              const p = l.product
+              const edited = l.price !== '' && priceOf(l) !== p.selling_price
+              return (
+                <div key={p.id} className="px-5 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">{p.name}</p>
+                    <span className="text-right text-sm font-semibold">{ksh(qtyOf(l) * priceOf(l))}</span>
+                    <button className="p-1 text-slate-400 hover:text-red-600" onClick={() => remove(p.id)} aria-label="Remove"><Trash2 size={14} /></button>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <div className="flex items-center rounded-lg border border-slate-200">
+                      <button className="p-1.5 hover:bg-slate-50" onClick={() => stepQty(l, -1)} aria-label="Decrease"><Minus size={14} /></button>
+                      <input className="w-10 text-center text-sm outline-none" inputMode="numeric" aria-label="Quantity"
+                        value={l.qty} onChange={(e) => typeQty(l, e.target.value)}
+                        onBlur={() => qtyOf(l) <= 0 && updateLine(p.id, { qty: 1 })} />
+                      <button className="p-1.5 hover:bg-slate-50" onClick={() => stepQty(l, 1)} aria-label="Increase"><Plus size={14} /></button>
+                    </div>
+                    <span className="text-xs text-slate-400">×</span>
+                    <label className={`flex items-center rounded-lg border px-2 ${edited ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
+                      <span className="text-xs text-slate-400">KSh</span>
+                      <input type="number" min="0" step="any" inputMode="decimal" aria-label={`Price of ${p.name}`}
+                        className="w-20 bg-transparent px-1 py-1 text-right text-sm outline-none"
+                        value={l.price} onChange={(e) => typePrice(l, e.target.value)}
+                        onBlur={() => l.price === '' && updateLine(p.id, { price: p.selling_price })} />
+                      <span className="text-xs text-slate-400">each</span>
+                    </label>
+                    {edited && (
+                      <button className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800" title="Back to the marked price"
+                        onClick={() => updateLine(p.id, { price: p.selling_price })}>
+                        <RotateCcw size={12} /> marked {ksh(p.selling_price)}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center rounded-lg border border-slate-200">
-                  <button className="p-1.5 hover:bg-slate-50" onClick={() => setQty(p.id, qty - 1)} aria-label="Decrease"><Minus size={14} /></button>
-                  <input className="w-10 text-center text-sm outline-none" value={qty} onChange={(e) => setQty(p.id, e.target.value)} />
-                  <button className="p-1.5 hover:bg-slate-50" onClick={() => setQty(p.id, qty + 1)} aria-label="Increase"><Plus size={14} /></button>
-                </div>
-                <span className="w-20 text-right text-sm font-semibold">{ksh(qty * p.selling_price)}</span>
-                <button className="p-1 text-slate-400 hover:text-red-600" onClick={() => setQty(p.id, 0)} aria-label="Remove"><Trash2 size={14} /></button>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <div className="space-y-3 border-t border-slate-100 p-5">
@@ -265,6 +310,9 @@ export default function Sales({ navigate }) {
             <p className="-mt-2 text-xs text-slate-400">Agreed a lower price? Type what the customer actually paid and the sale is recorded at that amount.</p>
 
             <div className="rounded-xl bg-slate-50 p-4 text-sm">
+              {priceEdits !== 0 && (
+                <div className="flex justify-between text-slate-500"><span>At marked prices</span><span>{ksh(marked)}</span></div>
+              )}
               <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>{ksh(subtotal)}</span></div>
               {discount > 0 && <div className="flex justify-between text-slate-500"><span>Points discount</span><span>−{ksh(discount)}</span></div>}
               {priceCut > 0 && (
@@ -290,7 +338,7 @@ export default function Sales({ navigate }) {
             </div>
 
             <Alert>{error}</Alert>
-            <Button className="w-full py-3 text-base" disabled={saving || cart.length === 0 || badAmount} onClick={review}>
+            <Button className="w-full py-3 text-base" disabled={saving || cart.length === 0 || badAmount || badLine} onClick={review}>
               <Receipt size={18} /> {`Checkout · ${ksh(toPay)}`}
             </Button>
           </div>

@@ -41,7 +41,7 @@ def sales_sections(db, start, end):
     a, b = start.strftime(FMT), end.strftime(FMT)
     k = db.execute(
         "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue, COALESCE(SUM(items_count), 0) AS items,"
-        " COALESCE(SUM(discount), 0) AS points, COALESCE(SUM(price_cut), 0) AS cuts FROM transactions"
+        " COALESCE(SUM(discount), 0) AS points, COALESCE(SUM(price_cut + price_edits), 0) AS cuts FROM transactions"
         " WHERE created_at >= ? AND created_at < ?", (a, b)).fetchone()
     # Discounts = loyalty points redeemed + prices agreed with customers below the listed price
     kpis = [
@@ -51,7 +51,7 @@ def sales_sections(db, start, end):
     ]
     daily = db.execute(
         "SELECT left(created_at, 10) AS day, COUNT(*) AS n, SUM(items_count) AS items,"
-        " SUM(discount + price_cut) AS discounts, SUM(total) AS revenue"
+        " SUM(discount + price_cut + price_edits) AS discounts, SUM(total) AS revenue"
         " FROM transactions WHERE created_at >= ? AND created_at < ? GROUP BY left(created_at, 10)"
         " ORDER BY day", (a, b)).fetchall()
     pays = db.execute(
@@ -72,7 +72,7 @@ def sales_sections(db, start, end):
                                  col("Items", width=2.6), col("Payment", width=0.7), col("Discount", "money", 0.8),
                                  col("Total", "money", 0.8)],
                 [(f"DB-{r['id']:05d}", r["created_at"][:16], r["customer"] or "Walk-in", r["items"] or "",
-                  r["payment_method"], r["discount"] + r["price_cut"], r["total"]) for r in receipts]),
+                  r["payment_method"], r["discount"] + r["price_cut"] + r["price_edits"], r["total"]) for r in receipts]),
     ]
 
 

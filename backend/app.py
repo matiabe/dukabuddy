@@ -130,6 +130,10 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_loyalty_customer ON loyalty_points (customer_id)",
     # price agreed at the till below the marked price (customer paid less): marked total - amount received
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS price_cut DOUBLE PRECISION NOT NULL DEFAULT 0",
+    # prices edited per item at the till: marked total - total at the edited prices (negative if sold above marked)
+    "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS price_edits DOUBLE PRECISION NOT NULL DEFAULT 0",
+    # the marked (list) price of the product when it was sold; unit_price is the price actually charged
+    "ALTER TABLE sales ADD COLUMN IF NOT EXISTS list_price DOUBLE PRECISION",
     # audit trail of sales the owner removed (the sale itself is deleted so no report counts it)
     """CREATE TABLE IF NOT EXISTS removed_sales (
         id SERIAL PRIMARY KEY,
@@ -506,26 +510,41 @@ def checkout(db, items, customer_id=None, redeem=0, payment_method="Cash", amoun
     if redeem < 0:
         raise SaleError("Points to redeem cannot be negative.")
 
-    # Merge duplicate products and validate quantities
-    wanted = {}
+    # Validate quantities and prices. Each item may carry its own unit_price (a price agreed with the
+    # customer); without one the product's marked selling price is used. Same product + same price = one line.
+    requested = []
     for it in items:
         try:
             pid, qty = int(it["product_id"]), int(it["quantity"])
-        except (KeyError, TypeError, ValueError):
-            raise SaleError("Each item needs a product and a valid quantity.")
+            price = it.get("unit_price")
+            price = None if price in (None, "") else round(float(price), 2)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise SaleError("Each item needs a product, a valid quantity and a valid price.")
         if qty <= 0:
             raise SaleError("Quantities must be greater than zero.")
-        wanted[pid] = wanted.get(pid, 0) + qty
+        if price is not None and (price != price or price < 0 or price == float("inf")):
+            raise SaleError("Prices must be zero or more.")
+        requested.append((pid, qty, price))
 
-    lines = []
+    products, wanted, merged = {}, {}, {}
+    for pid, qty, price in requested:
+        if pid not in products:
+            p = db.execute("SELECT * FROM products WHERE id = ?", (pid,)).fetchone()
+            if p is None:
+                raise SaleError("Product not found.", 404)
+            products[pid] = p
+        price = products[pid]["selling_price"] if price is None else price
+        wanted[pid] = wanted.get(pid, 0) + qty
+        merged[(pid, price)] = merged.get((pid, price), 0) + qty
     for pid, qty in wanted.items():
-        p = db.execute("SELECT * FROM products WHERE id = ?", (pid,)).fetchone()
-        if p is None:
-            raise SaleError("Product not found.", 404)
-        if p["quantity"] < qty:
-            raise SaleError(f"Not enough stock. Only {p['quantity']} left of {p['name']}.")
-        lines.append({"product": p, "qty": qty, "gross": p["selling_price"] * qty})
-    subtotal = sum(l["gross"] for l in lines)
+        if products[pid]["quantity"] < qty:
+            raise SaleError(f"Not enough stock. Only {products[pid]['quantity']} left of {products[pid]['name']}.")
+
+    lines = [{"product": products[pid], "qty": qty, "price": price, "gross": round(price * qty, 2)}
+             for (pid, price), qty in merged.items()]
+    subtotal = round(sum(l["gross"] for l in lines), 2)
+    marked = round(sum(l["product"]["selling_price"] * l["qty"] for l in lines), 2)
+    price_edits = round(marked - subtotal, 2)
 
     customer = None
     if customer_id is not None:
@@ -559,17 +578,20 @@ def checkout(db, items, customer_id=None, redeem=0, payment_method="Cash", amoun
     try:
         tid = db.execute(
             "INSERT INTO transactions (customer_id, subtotal, discount, total, items_count, payment_method,"
-            " amount_paid, change_given, points_earned, points_redeemed, price_cut)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " amount_paid, change_given, points_earned, points_redeemed, price_cut, price_edits)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (customer_id, subtotal, discount, total, sum(wanted.values()), payment_method, paid, paid - total,
-             earned, redeem, price_cut),
+             earned, redeem, price_cut, price_edits),
         ).lastrowid
         reduction = discount + price_cut
         remaining = reduction
         for i, l in enumerate(lines):
             p, qty = l["product"], l["qty"]
             # Spread points discount + agreed price cut across lines so per-product revenue stays accurate
-            share = remaining if i == len(lines) - 1 else round(reduction * l["gross"] / subtotal, 2)
+            if i == len(lines) - 1:
+                share = remaining
+            else:
+                share = round(reduction * l["gross"] / subtotal, 2) if subtotal else 0
             remaining -= share
             cur = db.execute("UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
                              (qty, p["id"], qty))
@@ -577,8 +599,9 @@ def checkout(db, items, customer_id=None, redeem=0, payment_method="Cash", amoun
                 raise SaleError(f"Not enough stock of {p['name']}.")
             db.execute(
                 "INSERT INTO sales (product_id, quantity, unit_price, unit_cost, total, customer_id, discount,"
-                " transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (p["id"], qty, p["selling_price"], p["buying_price"], l["gross"] - share, customer_id, share, tid),
+                " transaction_id, list_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (p["id"], qty, l["price"], p["buying_price"], l["gross"] - share, customer_id, share, tid,
+                 p["selling_price"]),
             )
         if customer is not None:
             receipt = receipt_no(tid)
@@ -620,7 +643,8 @@ def transaction_dicts(db, rows):
         f" WHERE s.transaction_id IN ({placeholders}) ORDER BY s.id", ids
     ).fetchall():
         items.setdefault(s["transaction_id"], []).append(
-            {k: s[k] for k in ("product_id", "product_name", "quantity", "unit_price", "discount", "total")}
+            {k: s[k] for k in ("id", "product_id", "product_name", "quantity", "unit_price", "list_price",
+                              "discount", "total")}
         )
     out = []
     for r in rows:
@@ -758,8 +782,9 @@ def list_transactions():
     rows = db.execute(TRANSACTION_QUERY + clause + " ORDER BY t.created_at DESC, t.id DESC LIMIT 200", params).fetchall()
     summary = dict(db.execute(
         "SELECT COUNT(*) AS count, COALESCE(SUM(t.total), 0) AS revenue, COALESCE(SUM(t.items_count), 0) AS items,"
-        " COALESCE(SUM(t.discount), 0) AS points_discounts, COALESCE(SUM(t.price_cut), 0) AS price_cuts,"
-        " COALESCE(SUM(t.discount + t.price_cut), 0) AS discounts,"
+        " COALESCE(SUM(t.discount), 0) AS points_discounts,"
+        " COALESCE(SUM(t.price_cut + t.price_edits), 0) AS price_cuts,"
+        " COALESCE(SUM(t.discount + t.price_cut + t.price_edits), 0) AS discounts,"
         " COALESCE(SUM(CASE WHEN t.customer_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS loyalty_sales" + base, params
     ).fetchone())
     daily = db.execute(
@@ -995,7 +1020,8 @@ def overview():
     period = "left(created_at, 10) BETWEEN ? AND ?"
     k = db.execute(
         "SELECT COUNT(*) AS count, COALESCE(SUM(items_count), 0) AS items, COALESCE(SUM(total), 0) AS revenue,"
-        " COALESCE(SUM(subtotal), 0) AS marked, COALESCE(SUM(price_cut), 0) AS price_cuts,"
+        " COALESCE(SUM(subtotal + price_edits), 0) AS marked,"
+        " COALESCE(SUM(price_cut + price_edits), 0) AS price_cuts,"
         f" COALESCE(SUM(discount), 0) AS points_discounts FROM transactions WHERE {period}", (start, end)).fetchone()
     by_payment = db.execute(
         f"SELECT payment_method AS method, COUNT(*) AS count, SUM(total) AS amount FROM transactions WHERE {period}"

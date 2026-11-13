@@ -174,7 +174,7 @@ export default function SalesHistory({ navigate }) {
                         {t.points_earned > 0 && <span className="ml-1 text-xs text-emerald-700">+{t.points_earned} pts</span>}
                       </td>
                       <td className="px-5 py-3 text-slate-500">{t.payment_method}</td>
-                      <td className="px-5 py-3 text-right text-slate-500">{t.discount + (t.price_cut || 0) ? ksh(t.discount + (t.price_cut || 0)) : "—"}</td>
+                      <td className="px-5 py-3 text-right text-slate-500">{t.discount + (t.price_cut || 0) + (t.price_edits || 0) ? ksh(t.discount + (t.price_cut || 0) + (t.price_edits || 0)) : "—"}</td>
                       <td className="px-5 py-3 text-right font-semibold">{ksh(t.total)}</td>
                     </tr>
                   ))}

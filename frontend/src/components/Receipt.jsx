@@ -23,10 +23,15 @@ export default function ReceiptModal({ tx, onClose, children, draft = false, onR
           </div>
           <div className="my-3 border-t border-dashed border-slate-300" />
           {tx.items.map((it) => (
-            <div key={it.product_id} className="mb-1.5">
+            <div key={it.id ?? `${it.product_id}-${it.unit_price}`} className="mb-1.5">
               <p>{it.product_name}</p>
               <div className="flex justify-between text-xs text-slate-600">
-                <span>{it.quantity} × {ksh(it.unit_price)}</span>
+                <span>
+                  {it.quantity} × {ksh(it.unit_price)}
+                  {it.list_price != null && it.list_price !== it.unit_price && (
+                    <span className="text-slate-400"> (marked {ksh(it.list_price)})</span>
+                  )}
+                </span>
                 <span>{ksh(it.quantity * it.unit_price)}</span>
               </div>
             </div>
