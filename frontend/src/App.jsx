@@ -29,7 +29,7 @@ const NAV = [
   { id: 'products', label: 'Products', icon: Package, page: Products, section: 'Shop', staff: true },
   { id: 'customers', label: 'Customers', icon: Users, page: Customers, section: 'Shop', staff: true },
   { id: 'debts', label: 'Debtors & Creditors', icon: HandCoins, page: Debts, section: 'Shop', staff: true },
-  { id: 'handover', label: 'Money Handover', staffLabel: 'Send money to boss', icon: Banknote, page: Handover, section: 'Shop', staff: true },
+  { id: 'handover', label: 'Money Sent to Me', staffLabel: 'Money Sent to Boss', icon: Banknote, page: Handover, section: 'Shop', staff: true },
   { id: 'lowstock', label: 'Restocking', icon: TriangleAlert, page: LowStock, section: 'Stock' },
   { id: 'autorestock', label: 'Auto Restock', icon: RefreshCcw, page: AutoRestock, section: 'Stock' },
   { id: 'performance', label: 'Performance', icon: TrendingUp, page: Performance, section: 'Insights' },

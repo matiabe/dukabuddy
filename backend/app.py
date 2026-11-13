@@ -181,7 +181,7 @@ def init_db():
         auth.init_auth(app, db)
         sms.init_sms(db)  # after users exist: adds users.phone
         debts.init_debts(db)
-        handover.init_handover(db)  # after users and transactions
+        handover.init_handover(db)  # after users
         backfill_transactions(db)
         fill_missing_costs(db)
         db.commit()
@@ -667,9 +667,7 @@ def run_checkout(data):
         redeem = int(data.get("redeem_points") or 0)
         tid = checkout(db, data.get("items") or [], customer_id, redeem,
                        data.get("payment_method") or "Cash", data.get("amount_paid"))
-        uid = auth.current_user()["id"]
-        db.execute("UPDATE transactions SET user_id = ? WHERE id = ?", (uid, tid))
-        handover.attach_sale(db, tid, uid)  # counts towards the money this person sends to the boss
+        db.execute("UPDATE transactions SET user_id = ? WHERE id = ?", (auth.current_user()["id"], tid))
         db.commit()
     except SaleError as e:
         return jsonify(error=str(e)), e.status
@@ -977,10 +975,10 @@ def dashboard():
     ).fetchall()
     low = low_stock_products(db)
     customers = all_customers(db)
-    pending = db.execute("SELECT COUNT(*) AS count, COALESCE(SUM(amount_sent), 0) AS amount FROM cash_sessions"
-                         " WHERE status = 'sent'").fetchone()
+    sent_today = db.execute("SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS amount FROM money_sent"
+                            " WHERE sent_on = left(local_now(), 10)").fetchone()
     return jsonify(
-        pending_handovers=dict(pending),
+        money_sent_today=dict(sent_today),
         total_customers=len(customers),
         at_risk_customers=sum(1 for c in customers if c["status"] == "At risk"),
         points_outstanding=sum(c["points"] for c in customers),

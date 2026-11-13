@@ -34,14 +34,14 @@ export default function Dashboard({ navigate }) {
 
       {data && (
         <>
-          {data.pending_handovers?.count > 0 && (
-            <button onClick={() => navigate('handover')} className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-left text-sm text-amber-900 hover:bg-amber-100">
+          {data.money_sent_today?.count > 0 && (
+            <button onClick={() => navigate('handover')} className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-left text-sm text-emerald-900 hover:bg-emerald-100">
               <Banknote size={20} className="shrink-0" />
               <span className="flex-1">
-                <span className="font-semibold">{ksh(data.pending_handovers.amount)}</span> sent to you by staff
-                ({data.pending_handovers.count} handover{data.pending_handovers.count === 1 ? '' : 's'}) is waiting for you to confirm.
+                Staff recorded sending you <span className="font-semibold">{ksh(data.money_sent_today.amount)}</span> today
+                ({data.money_sent_today.count} time{data.money_sent_today.count === 1 ? '' : 's'}).
               </span>
-              <span className="font-medium">Check →</span>
+              <span className="font-medium">View →</span>
             </button>
           )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">

@@ -103,8 +103,8 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 | Shop Overview, New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
 | Products: view, search, **Restock** (receive deliveries) | ✓ | ✓ |
 | **Debtors & Creditors**: add, record payments, update and correct amounts | ✓ | ✓ |
-| **Send money to boss** (their own sales) | ✓ | ✓ |
-| **Money Handover**: see money sent and still with staff, confirm received / report a problem | ✓ | |
+| **Money Sent to Boss**: record money sent and see their own records and totals | ✓ | ✓ |
+| **Money Sent to Me**: everyone's records, totals per staff member, delete any record | ✓ | |
 | Buying prices, profit, margins, stock value | ✓ | hidden |
 | Add products, Excel import, bonus points, remove a sale | ✓ | |
 | Dashboard, Restocking, Auto Restock, Performance, Reports, AI Assistant, Alerts & Settings | ✓ | |
@@ -114,11 +114,11 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 Open a record to log a payment, add more owed, or correct the amount (a reason is required). Every change is saved in the
 record's history with who made it and when. Only records with a balance of KSh 0 can be deleted.
 
-**Money handover:** every sale goes into the seller's open *session* (it starts by itself at their first sale). On
-**Send money to boss** they see what they collected (Cash, M-Pesa, Card; Credit sales are not counted as collected), enter
-the amount they are sending, how (cash handed over, M-Pesa or bank) and the M-Pesa code. Sending a different amount needs
-a note. Owners with a phone number get an SMS. The **Money Handover** page (and a banner on the Dashboard) shows money
-waiting for confirmation and money still with staff. Open a handover to mark it **Received** or report a **Problem**.
+**Money sent to the boss:** a simple log that staff fill in themselves. Each time they send money to the boss they
+record the amount, how (cash handed over, M-Pesa or bank), the M-Pesa code, the date and an optional note. The page shows
+totals for today, this week (from Monday), this month and all time. It is not linked to sales and needs no confirmation.
+Owners see everyone's records with a total per staff member, get an SMS for each one (if they have a phone number), and
+see today's total on the Dashboard. Staff can delete a record on the day they made it; owners can delete any record.
 
 Every receipt records **who served** the customer. Switching an account off or resetting its password logs that person out on every device straight away.
 Forgot the owner password? Another owner can reset it. If there is no other owner, run `reset-database.bat` (this deletes everything, so restore from a backup afterwards).
