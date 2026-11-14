@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PackagePlus, Sparkles } from 'lucide-react'
+import { PackagePlus, Printer, Sparkles } from 'lucide-react'
 import { api, ksh, when } from '../api.js'
 import { Alert, Button, Card, PageHeader, StockBadge } from '../components/ui.jsx'
 
@@ -30,12 +30,23 @@ export default function LowStock({ navigate }) {
   }
 
 
+  const outOfStock = items?.filter((p) => p.quantity <= 0) ?? []
+  const lowStock = items?.filter((p) => p.quantity > 0) ?? []
+
   return (
     <>
+      <PrintSheet outOfStock={outOfStock} lowStock={lowStock} />
       <PageHeader
         title="Restocking"
         subtitle="Products at or below their reorder level, with suggested order quantities."
-        action={<Button onClick={() => navigate('assistant')}><Sparkles size={16} /> Get AI restock plan</Button>}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" disabled={!items?.length} onClick={() => window.print()}>
+              <Printer size={16} /> Print list
+            </Button>
+            <Button onClick={() => navigate('assistant')}><Sparkles size={16} /> Get AI restock plan</Button>
+          </div>
+        }
       />
       <div className="mb-4 space-y-2">
         <Alert>{error}</Alert>
@@ -118,5 +129,53 @@ export default function LowStock({ navigate }) {
         </div>
       </Card>
     </>
+  )
+}
+
+// Shown only when printing (Print list button): out-of-stock and low-stock products as a shopping list.
+function PrintSheet({ outOfStock, lowStock }) {
+  const printed = new Date().toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })
+  return (
+    <div className="print-sheet hidden text-sm text-black">
+      <h1 className="text-xl font-bold">NyamsComm - Restock list</h1>
+      <p className="mb-4 text-xs">Printed {printed} · {outOfStock.length} out of stock · {lowStock.length} low stock</p>
+      <PrintTable title="Out of stock" products={outOfStock} />
+      <PrintTable title="Low stock" products={lowStock} />
+    </div>
+  )
+}
+
+function PrintTable({ title, products }) {
+  return (
+    <section className="mb-6">
+      <h2 className="mb-1 text-base font-bold">{title} ({products.length})</h2>
+      {products.length === 0 ? (
+        <p className="text-xs">None.</p>
+      ) : (
+        <table className="w-full border-collapse text-left text-xs">
+          <thead>
+            <tr>
+              {['#', 'Product', 'Category', 'In stock', 'Reorder at', 'Sold (7 days)', 'Suggested order', 'Bought'].map((h) => (
+                <th key={h} className="border border-black px-2 py-1">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((p, i) => (
+              <tr key={p.id} className="break-inside-avoid">
+                <td className="border border-black px-2 py-1">{i + 1}</td>
+                <td className="border border-black px-2 py-1 font-medium">{p.name}</td>
+                <td className="border border-black px-2 py-1">{p.category}</td>
+                <td className="border border-black px-2 py-1 text-right">{p.quantity}</td>
+                <td className="border border-black px-2 py-1 text-right">{p.reorder_level}</td>
+                <td className="border border-black px-2 py-1 text-right">{p.units_sold_7d}</td>
+                <td className="border border-black px-2 py-1 text-right">{p.suggested_order}</td>
+                <td className="w-20 border border-black px-2 py-1"></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   )
 }

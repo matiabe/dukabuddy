@@ -164,6 +164,7 @@ Run `start.bat` again (it restarts the backend). Without a key, the assistant fa
   - **Remove a sale** (owner only) that didn't really happen: a reason is required, the stock goes back, loyalty points are reversed, and a copy is kept in the *Removed sales* list
 - Customers & loyalty: points per KSh 100 spent, Bronze/Silver/Gold tiers, redeem points as discount, bonus awards, shopping behaviour per customer
 - Low-stock alerts: quantity ≤ reorder level
+  - **Print the restock list** (Restocking → *Print list*, owner only): one page with an *Out of stock* table and a *Low stock* table - product, category, in stock, reorder level, sold in 7 days, suggested order, and a blank *Bought* column to tick off while buying. Buying prices are not shown. Print it or save it as PDF from the print dialog
 - AI assistant: sends live inventory + 7-day sales to Claude for restock recommendations
 
 ## Importing your product list (Excel)

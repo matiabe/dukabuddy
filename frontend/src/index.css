@@ -7,4 +7,6 @@ body { @apply bg-slate-50 text-slate-800 antialiased; font-family: Inter, ui-san
   .print-area, .print-area * { visibility: visible; }
   .print-area { position: absolute; inset: 0 auto auto 0; width: 80mm; box-shadow: none; border: 0; }
   .no-print { display: none !important; }
+  .print-sheet { display: block !important; position: absolute; inset: 0 0 auto 0; padding: 0 4mm; }
+  .print-sheet, .print-sheet * { visibility: visible; }
 }
