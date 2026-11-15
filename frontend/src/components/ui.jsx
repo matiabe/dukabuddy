@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { Star } from 'lucide-react'
+
 export function Card({ className = '', children }) {
   return <div className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${className}`}>{children}</div>
 }
@@ -72,4 +75,32 @@ export function StockBadge({ product }) {
   if (product.low_stock)
     return <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">Low stock</span>
   return <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">In stock</span>
+}
+
+// 1-5 stars. Read-only by default; pass onChange to let the user pick a rating.
+export function StarRating({ value = 0, onChange, size = 16 }) {
+  const [hover, setHover] = useState(0)
+  const shown = hover || value
+  return (
+    <span className="inline-flex items-center gap-0.5" onMouseLeave={() => setHover(0)}
+      {...(onChange ? {} : { role: 'img', 'aria-label': `${value} out of 5 stars` })}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const fill = shown >= n ? 100 : shown > n - 1 ? Math.round((shown - n + 1) * 100) : 0
+        const star = (
+          <span className="relative inline-block" style={{ width: size, height: size }}>
+            <Star size={size} className="absolute inset-0 text-slate-300" />
+            <span className="absolute inset-0 overflow-hidden" style={{ width: `${fill}%` }}>
+              <Star size={size} className="fill-amber-400 text-amber-400" />
+            </span>
+          </span>
+        )
+        return onChange ? (
+          <button key={n} type="button" onClick={() => onChange(n)} onMouseEnter={() => setHover(n)}
+            className="rounded p-0.5 hover:scale-110" aria-label={`${n} star${n > 1 ? 's' : ''}`}>
+            {star}
+          </button>
+        ) : <span key={n}>{star}</span>
+      })}
+    </span>
+  )
 }

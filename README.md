@@ -102,6 +102,7 @@ Everyone logs in with their own username and password. Sessions last 12 hours. A
 |---|---|---|
 | Shop Overview, New Sale (till), receipts, Sales History, Customers (add, view) | ✓ | ✓ |
 | Products: view, search, **Restock** (receive deliveries) | ✓ | ✓ |
+| **Product reviews**: rate products with 1-5 stars and a comment; delete own review | ✓ | ✓ |
 | **Debtors & Creditors**: add, record payments, update and correct amounts | ✓ | ✓ |
 | **Money Sent to Boss**: record money sent and see their own records and totals | ✓ | ✓ |
 | **Money Sent to Me**: everyone's records, totals per staff member, delete any record | ✓ | |
@@ -151,6 +152,7 @@ Run `start.bat` again (it restarts the backend). Without a key, the assistant fa
 ## Features
 - Dashboard: total products, today's sales, inventory value (at cost), low-stock count — all computed live from PostgreSQL
 - Add/view/search products, restock received goods
+- **Product reviews** (Products → *Rating* column): everyone can rate a product from 1 to 5 stars with an optional comment. Each person has one review per product (rating again updates it). The list shows each product's average rating and number of reviews; click the stars to see all reviews. Anyone can delete their own review; owners can delete any
 - **Import products from Excel** (Products → *Import from Excel*): upload a `.xlsx` (or `.csv`) stock list, check the preview, then confirm. See below.
 - **Shop Overview** (owner and staff): what was sold in a period (today, yesterday, last 7 days, this month or any dates), split by payment method and staff member, plus current stock on hand
 - New Sale (till): several products on one receipt, loyalty points, payment method (Cash / M-Pesa / Card / Credit, recorded as a label), cash change. Stock deducted automatically; a sale either fully succeeds or nothing changes

@@ -12,6 +12,7 @@ import auth
 import automation
 import debts
 import handover
+import reviews
 import product_import
 import reports
 import sms
@@ -55,6 +56,7 @@ app.register_blueprint(sms.bp)
 app.register_blueprint(reports.bp)
 app.register_blueprint(debts.bp)
 app.register_blueprint(handover.bp)
+app.register_blueprint(reviews.bp)
 
 
 SCHEMA = [
@@ -182,6 +184,7 @@ def init_db():
         sms.init_sms(db)  # after users exist: adds users.phone
         debts.init_debts(db)
         handover.init_handover(db)  # after users
+        reviews.init_reviews(db)  # after users and products
         backfill_transactions(db)
         fill_missing_costs(db)
         db.commit()
@@ -331,7 +334,9 @@ PRODUCT_QUERY = """
         COALESCE(s.revenue, 0) AS revenue,
         COALESCE(s.units_sold_7d, 0) AS units_sold_7d,
         s.last_sold_at,
-        r.last_restocked_at
+        r.last_restocked_at,
+        rv.avg_rating,
+        COALESCE(rv.review_count, 0) AS review_count
     FROM products p
     LEFT JOIN (
         SELECT product_id, COUNT(*) AS sales_count, SUM(quantity) AS units_sold, SUM(total) AS revenue,
@@ -342,6 +347,10 @@ PRODUCT_QUERY = """
     LEFT JOIN (
         SELECT product_id, MAX(created_at) AS last_restocked_at FROM restocks GROUP BY product_id
     ) r ON r.product_id = p.id
+    LEFT JOIN (
+        SELECT product_id, ROUND(AVG(rating)::numeric, 1)::float AS avg_rating, COUNT(*) AS review_count
+        FROM product_reviews GROUP BY product_id
+    ) rv ON rv.product_id = p.id
 """
 
 

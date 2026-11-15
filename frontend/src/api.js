@@ -39,6 +39,10 @@ export const api = {
   restock: (id, quantity, unit_cost) =>
     request(`/products/${id}/restock`, { method: 'POST', body: { quantity, unit_cost } }),
   restocks: () => request('/restocks'),
+  reviews: (productId) => request(`/products/${productId}/reviews`),
+  saveReview: (productId, rating, comment) =>
+    request(`/products/${productId}/reviews`, { method: 'POST', body: { rating, comment } }),
+  deleteReview: (id) => request(`/reviews/${id}`, { method: 'DELETE' }),
   sales: () => request('/sales'),
   checkout: (sale) => request('/transactions', { method: 'POST', body: sale }),
   transactions: (filters = {}) => {

@@ -44,6 +44,10 @@ STAFF_ALLOWED = [
     ("GET", r"/api/products"),
     ("GET", r"/api/products/low-stock"),
     ("POST", r"/api/products/\d+/restock"),
+    # product reviews: everyone can rate (reviews.py limits deleting to your own unless owner)
+    ("GET", r"/api/products/\d+/reviews"),
+    ("POST", r"/api/products/\d+/reviews"),
+    ("DELETE", r"/api/reviews/\d+"),
     ("GET", r"/api/sales"),
     ("POST", r"/api/sales"),
     ("POST", r"/api/transactions"),
