@@ -37,6 +37,10 @@ SCHEMA = [
     )""",
     # who served each sale
     "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    # forgotten password: a one-time code sent by SMS (only its hash is stored)
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_code_hash TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires BIGINT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_attempts INTEGER NOT NULL DEFAULT 0",
 ]
 
 # Requests staff may make (method, path regex). Everything else under /api needs the owner role.
@@ -67,7 +71,7 @@ STAFF_ALLOWED = [
     ("DELETE", r"/api/handover/\d+"),
     ("POST", r"/api/auth/password"),
 ]
-PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup)")]
+PUBLIC = [("GET", r"/api/health"), ("GET", r"/api/auth/me"), ("POST", r"/api/auth/(login|logout|setup|forgot|reset)")]
 COST_KEYS = {"buying_price", "unit_cost", "profit", "suggested_cost", "total_cost", "margin_pct", "cost",
              "stock_cost_value"}
 # The shop does not show buying prices or anything worked out from them (profit, margin, cost values) to
@@ -263,6 +267,73 @@ def change_password():
     db.commit()
     _start_session({**user, "session_version": user["session_version"] + 1})  # stay logged in on this device
     return jsonify(ok=True)
+
+
+# ---------------- forgotten password (code sent by SMS to the phone saved on the account) ----------------
+RESET_MINUTES, RESET_MAX_ATTEMPTS, RESET_RESEND_SECONDS = 15, 5, 60
+_reset_requests = {}  # username -> time of last code sent (stops someone flooding a phone with SMS)
+
+
+def _send_reset_code(db, user, code):
+    import sms  # local import: sms imports nothing from auth, but keep load order simple
+    shop = _shop_name(db)
+    sms.send(db, "password_reset", [(user, f"{shop}: your password reset code is {code}. "
+                                            f"It expires in {RESET_MINUTES} minutes. Ignore this if you did not ask.")])
+
+
+@bp.post("/api/auth/forgot")
+def forgot_password():
+    """Send a reset code by SMS. Always gives the same answer, so it does not reveal which usernames exist."""
+    username = str((request.get_json(silent=True) or {}).get("username") or "").strip().lower()
+    reply = jsonify(ok=True, message="If that account has a phone number saved, a 6-digit code has been sent to it. "
+                                     "No phone number on the account? Ask the shop owner to reset your password.")
+    if not username:
+        return jsonify(error="Enter your username."), 400
+    if time.time() - _reset_requests.get(username, 0) < RESET_RESEND_SECONDS:
+        return jsonify(error="A code was just sent. Wait a minute before asking for another."), 429
+    db = get_db()
+    row = db.execute("SELECT id, name, phone FROM users WHERE username = ? AND active", (username,)).fetchone()
+    if row is None or not row["phone"]:
+        return reply
+    from sms import in_background, normalize_phone
+    if not normalize_phone(row["phone"]):
+        return reply
+    _reset_requests[username] = time.time()
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    db.execute("UPDATE users SET reset_code_hash = ?, reset_expires = ?, reset_attempts = 0 WHERE id = ?",
+               (generate_password_hash(code), int(time.time()) + RESET_MINUTES * 60, row["id"]))
+    db.commit()
+    in_background(_send_reset_code, dict(row), code)  # SMS in the background: same reply time either way
+    return reply
+
+
+@bp.post("/api/auth/reset")
+def reset_password():
+    """Check the SMS code and set a new password. Logs the person out of every other device."""
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username") or "").strip().lower()
+    code = re.sub(r"\s", "", str(data.get("code") or ""))
+    new = str(data.get("new_password") or "")
+    if len(new) < MIN_PASSWORD:
+        return jsonify(error=f"New password must be at least {MIN_PASSWORD} characters."), 400
+    db = get_db()
+    row = db.execute("SELECT * FROM users WHERE username = ? AND active", (username,)).fetchone()
+    bad = jsonify(error="That code is wrong or has expired. Ask for a new code.")
+    if (row is None or not row["reset_code_hash"] or (row["reset_expires"] or 0) < time.time()
+            or row["reset_attempts"] >= RESET_MAX_ATTEMPTS):
+        return bad, 400
+    if not check_password_hash(row["reset_code_hash"], code):
+        db.execute("UPDATE users SET reset_attempts = reset_attempts + 1 WHERE id = ?", (row["id"],))
+        db.commit()
+        return bad, 400
+    db.execute("UPDATE users SET password_hash = ?, session_version = session_version + 1, reset_code_hash = NULL,"
+               " reset_expires = NULL, reset_attempts = 0 WHERE id = ?", (generate_password_hash(new), row["id"]))
+    db.commit()
+    for k in [k for k in _failures if k.endswith(f"|{username}")]:
+        _failures.pop(k, None)  # a fresh password clears any wrong-password lockout
+    u = dict(db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone())
+    _start_session(u)
+    return jsonify(user=public_user(u))
 
 
 @bp.get("/api/users")

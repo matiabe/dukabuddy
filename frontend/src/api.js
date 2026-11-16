@@ -28,6 +28,9 @@ export const api = {
   logout: () => request('/auth/logout', { method: 'POST' }),
   changePassword: (current_password, new_password) =>
     request('/auth/password', { method: 'POST', body: { current_password, new_password } }),
+  forgotPassword: (username) => request('/auth/forgot', { method: 'POST', body: { username } }),
+  resetPassword: (username, code, new_password) =>
+    request('/auth/reset', { method: 'POST', body: { username, code, new_password } }),
   users: () => request('/users'),
   addUser: (u) => request('/users', { method: 'POST', body: u }),
   updateUser: (id, u) => request(`/users/${id}`, { method: 'PUT', body: u }),

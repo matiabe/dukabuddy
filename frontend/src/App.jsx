@@ -18,7 +18,7 @@ import UsersPage from './pages/Users.jsx'
 import Login from './pages/Login.jsx'
 import { api } from './api.js'
 import { AuthContext } from './auth.jsx'
-import { Alert, Button, Field, inputClass } from './components/ui.jsx'
+import { Alert, Button, Field, PasswordInput } from './components/ui.jsx'
 
 // staff: true = staff can open it too (everything else is owner-only; the backend enforces the same rules)
 const NAV = [
@@ -177,9 +177,9 @@ function ChangePassword({ onClose }) {
         ) : (
           <>
             <Alert>{error}</Alert>
-            <Field label="Current password"><input type="password" className={inputClass} value={form.current} onChange={set('current')} autoComplete="current-password" required autoFocus /></Field>
-            <Field label="New password (at least 6 characters)"><input type="password" className={inputClass} value={form.next} onChange={set('next')} minLength={6} autoComplete="new-password" required /></Field>
-            <Field label="Repeat new password"><input type="password" className={inputClass} value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required /></Field>
+            <Field label="Current password"><PasswordInput value={form.current} onChange={set('current')} autoComplete="current-password" required autoFocus /></Field>
+            <Field label="New password (at least 6 characters)"><PasswordInput value={form.next} onChange={set('next')} minLength={6} autoComplete="new-password" required /></Field>
+            <Field label="Repeat new password"><PasswordInput value={form.confirm} onChange={set('confirm')} autoComplete="new-password" required /></Field>
             <div className="flex gap-2">
               <Button type="submit" className="flex-1">Change password</Button>
               <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
