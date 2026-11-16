@@ -482,6 +482,79 @@ def list_restocks():
     return jsonify([dict(r) for r in rows])
 
 
+def _take_back_stock(db, product_id, qty):
+    """Remove qty units added by a restock. Returns an error message if some of them are already sold."""
+    p = db.execute("SELECT name, quantity FROM products WHERE id = ?", (product_id,)).fetchone()
+    if p and p["quantity"] < qty:
+        return (f"Can't take back {qty} units of {p['name']}: only {p['quantity']} are left in stock "
+                "(the rest have been sold).")
+    db.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (qty, product_id))
+    return None
+
+
+@app.put("/api/restocks/<int:rid>")
+def edit_restock(rid):
+    """Owner only (Restocking page): fix a restock entered for the wrong product or wrong quantity.
+    Takes the old units back off the old product and adds the new units to the chosen product."""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    old = db.execute("SELECT * FROM restocks WHERE id = ?", (rid,)).fetchone()
+    if old is None:
+        return jsonify(error="Restock not found. It may have been removed."), 404
+    try:
+        pid = int(data["product_id"] if data.get("product_id") is not None else old["product_id"])
+        qty = int(data["quantity"] if data.get("quantity") not in (None, "") else old["quantity"])
+    except (TypeError, ValueError):
+        return jsonify(error="Enter a valid quantity."), 400
+    if qty <= 0:
+        return jsonify(error="Quantity must be greater than zero."), 400
+    product = db.execute("SELECT * FROM products WHERE id = ?", (pid,)).fetchone()
+    if product is None:
+        return jsonify(error="Product not found."), 404
+    # Same product: keep what was paid per unit. Different product: use that product's buying price.
+    unit_cost = old["unit_cost"] if pid == old["product_id"] else product["buying_price"]
+    try:
+        if pid == old["product_id"]:
+            # only the difference moves: 50 -> 45 takes back 5 units, 45 -> 50 adds 5
+            err = _take_back_stock(db, pid, old["quantity"] - qty) if qty < old["quantity"] else None
+            if qty > old["quantity"]:
+                db.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (qty - old["quantity"], pid))
+        else:
+            err = _take_back_stock(db, old["product_id"], old["quantity"])
+            if not err:
+                db.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (qty, pid))
+        if err:
+            db.rollback()
+            return jsonify(error=err), 409
+        db.execute("UPDATE restocks SET product_id = ?, quantity = ?, unit_cost = ?, total_cost = ? WHERE id = ?",
+                   (pid, qty, unit_cost, unit_cost * qty, rid))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify(ok=True, product=fetch_product(db, pid))
+
+
+@app.delete("/api/restocks/<int:rid>")
+def delete_restock(rid):
+    """Owner only: undo a restock that never happened. Takes its units back off the product."""
+    db = get_db()
+    old = db.execute("SELECT * FROM restocks WHERE id = ?", (rid,)).fetchone()
+    if old is None:
+        return jsonify(error="Restock not found. It may have been removed."), 404
+    try:
+        err = _take_back_stock(db, old["product_id"], old["quantity"])
+        if err:
+            db.rollback()
+            return jsonify(error=err), 409
+        db.execute("DELETE FROM restocks WHERE id = ?", (rid,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify(ok=True, product=fetch_product(db, old["product_id"]))
+
+
 @app.get("/api/products/low-stock")
 def get_low_stock():
     return jsonify(low_stock_products(get_db()))
