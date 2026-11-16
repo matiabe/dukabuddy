@@ -1,9 +1,6 @@
 """NyamsComm backend (electronics dealer edition) - Flask + PostgreSQL."""
-import json
 import os
 import re
-import urllib.error
-import urllib.request
 
 from flask import Flask, Response, jsonify, request
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -18,7 +15,7 @@ import reports
 import sms
 from db import LOCAL_NOW_FUNCTION, IntegrityError, close_db, connect, get_db
 
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 app = Flask(__name__)
 # Behind the nginx container (and Caddy on a cloud server): trust that many X-Forwarded-For hops so login
@@ -1058,103 +1055,337 @@ def overview():
 
 
 # ---------------- AI Assistant ----------------
-def build_inventory_context(db):
-    products = db.execute("SELECT * FROM products ORDER BY name").fetchall()
-    sales_7d = {
-        r["product_id"]: r["qty"]
-        for r in db.execute(
-            "SELECT product_id, SUM(quantity) AS qty FROM sales"
-            " WHERE created_at >= local_now('-7 days') GROUP BY product_id"
-        ).fetchall()
+# The assistant answers whatever the owner asks about the shop (sales, stock, prices, customers, debts, staff),
+# not only restocking. Every question gets a fresh snapshot of the shop's data. With ANTHROPIC_API_KEY set, Claude
+# answers from that snapshot; without it, a rule-based helper answers the common kinds of question.
+def _period_sales(db, since_sql, until_sql=None):
+    where = "created_at >= " + since_sql + (" AND created_at < " + until_sql if until_sql else "")
+    row = db.execute(f"SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue, COALESCE(SUM(items_count), 0) AS items,"
+                     f" COALESCE(SUM(discount), 0) AS discount FROM transactions WHERE {where}").fetchone()
+    return dict(row)
+
+
+def gather_shop_data(db):
+    """Everything the assistant may need, as plain Python data (no buying prices / profit: those are hidden)."""
+    products = [dict(r) for r in db.execute(
+        "SELECT p.id, p.name, p.category, p.quantity, p.reorder_level, p.selling_price,"
+        " COALESCE(s7.qty, 0) AS sold_7d, COALESCE(s30.qty, 0) AS sold_30d, COALESCE(s30.rev, 0) AS revenue_30d,"
+        " COALESCE(sa.qty, 0) AS sold_all, sa.last_sold"
+        " FROM products p"
+        " LEFT JOIN (SELECT product_id, SUM(quantity) AS qty FROM sales WHERE created_at >= local_now('-7 days')"
+        "            GROUP BY product_id) s7 ON s7.product_id = p.id"
+        " LEFT JOIN (SELECT product_id, SUM(quantity) AS qty, SUM(total) AS rev FROM sales"
+        "            WHERE created_at >= local_now('-30 days') GROUP BY product_id) s30 ON s30.product_id = p.id"
+        " LEFT JOIN (SELECT product_id, SUM(quantity) AS qty, MAX(created_at) AS last_sold FROM sales"
+        "            GROUP BY product_id) sa ON sa.product_id = p.id"
+        " ORDER BY p.name").fetchall()]
+    today = "LEFT(local_now(), 10)"
+    periods = {
+        "today": _period_sales(db, today),
+        "yesterday": _period_sales(db, "LEFT(local_now('-1 days'), 10)", today),
+        "last_7_days": _period_sales(db, "local_now('-7 days')"),
+        "last_30_days": _period_sales(db, "local_now('-30 days')"),
+        "this_month": _period_sales(db, "LEFT(local_now(), 7)"),
+        "all_time": _period_sales(db, "''"),
     }
-    lines = ["name | category | qty_in_stock | reorder_level | selling_KSh | units_sold_last_7_days | LOW?"]
+    daily = [dict(r) for r in db.execute(
+        "SELECT LEFT(created_at, 10) AS day, COUNT(*) AS sales, SUM(total) AS revenue FROM transactions"
+        " WHERE created_at >= local_now('-14 days') GROUP BY 1 ORDER BY 1").fetchall()]
+    payments = [dict(r) for r in db.execute(
+        "SELECT payment_method, COUNT(*) AS sales, SUM(total) AS revenue FROM transactions"
+        " WHERE created_at >= local_now('-30 days') GROUP BY 1 ORDER BY 3 DESC").fetchall()]
+    staff = [dict(r) for r in db.execute(
+        "SELECT COALESCE(u.name, 'Unknown') AS staff, COUNT(*) AS sales, SUM(t.total) AS revenue FROM transactions t"
+        " LEFT JOIN users u ON u.id = t.user_id WHERE t.created_at >= local_now('-30 days') GROUP BY 1 ORDER BY 3 DESC"
+    ).fetchall()]
+    recent = [dict(r) for r in db.execute(
+        "SELECT t.id, t.created_at, t.total, t.items_count, t.payment_method, c.name AS customer, u.name AS served_by,"
+        " (SELECT STRING_AGG(s.quantity || 'x ' || p.name, ', ') FROM sales s JOIN products p ON p.id = s.product_id"
+        "  WHERE s.transaction_id = t.id) AS items"
+        " FROM transactions t LEFT JOIN customers c ON c.id = t.customer_id LEFT JOIN users u ON u.id = t.user_id"
+        " ORDER BY t.created_at DESC LIMIT 25").fetchall()]
+    customers = all_customers(db)
+    debts = [dict(r) for r in db.execute(
+        "SELECT kind, name, phone, balance, due_date, note FROM debts WHERE balance > 0 ORDER BY kind, balance DESC"
+    ).fetchall()]
+    now = db.execute("SELECT local_now()").fetchone()[0]
+    return {"now": now, "products": products, "periods": periods, "daily": daily, "payments": payments,
+            "staff": staff, "recent": recent, "customers": customers, "debts": debts}
+
+
+def shop_data_text(d):
+    """The snapshot as compact text for Claude."""
+    out = [f"Current date and time: {d['now']} (Kenya time)", ""]
+    out.append("## Sales totals (KSh, completed sales)")
+    for name, p in d["periods"].items():
+        out.append(f"- {name}: {p['n']} sales, KSh {p['revenue']:,.0f}, {p['items']} items, discounts KSh {p['discount']:,.0f}")
+    out += ["", "## Daily sales, last 14 days (days with no sales are left out)"]
+    out += [f"- {r['day']}: {r['sales']} sales, KSh {r['revenue']:,.0f}" for r in d["daily"]] or ["- none"]
+    out += ["", "## Payment methods, last 30 days"]
+    out += [f"- {r['payment_method']}: {r['sales']} sales, KSh {r['revenue']:,.0f}" for r in d["payments"]] or ["- none"]
+    out += ["", "## Sales by staff member, last 30 days"]
+    out += [f"- {r['staff']}: {r['sales']} sales, KSh {r['revenue']:,.0f}" for r in d["staff"]] or ["- none"]
+    out += ["", "## Most recent sales (newest first)"]
+    out += [f"- #{r['id']} {r['created_at']}: KSh {r['total']:,.0f} ({r['payment_method']}) - {r['items'] or '?'}"
+            f" - customer: {r['customer'] or 'walk-in'} - served by: {r['served_by'] or 'unknown'}"
+            for r in d["recent"]] or ["- none"]
+    out += ["", "## Products",
+            "name | category | in_stock | reorder_level | selling_price_KSh | sold_7d | sold_30d | revenue_30d_KSh"
+            " | sold_all_time | last_sold | status"]
+    for p in d["products"]:
+        status = "OUT OF STOCK" if p["quantity"] == 0 else "LOW" if p["quantity"] <= p["reorder_level"] else "ok"
+        out.append(f"{p['name']} | {p['category']} | {p['quantity']} | {p['reorder_level']} | {p['selling_price']:,.0f}"
+                   f" | {p['sold_7d']} | {p['sold_30d']} | {p['revenue_30d']:,.0f} | {p['sold_all']}"
+                   f" | {p['last_sold'] or 'never'} | {status}")
+    out += ["", "## Loyalty customers",
+            "name | phone | tier | points | total_spent_KSh | visits | visits_30d | days_since_last_visit | status"]
+    out += [f"{c['name']} | {c['phone']} | {c['tier']} | {c['points']} | {c['total_spent']:,.0f} | {c['visits']}"
+            f" | {c['visits_30d']} | {c['days_since_visit'] if c['days_since_visit'] is not None else '-'} | {c['status']}"
+            for c in d["customers"]] or ["(no loyalty customers yet)"]
+    out += ["", "## Debts (debtor = owes the shop, creditor = the shop owes them)"]
+    out += [f"- {r['kind']}: {r['name']} ({r['phone'] or 'no phone'}) KSh {r['balance']:,.0f}"
+            f"{', due ' + r['due_date'] if r['due_date'] else ''}{', note: ' + r['note'] if r['note'] else ''}"
+            for r in d["debts"]] or ["- none outstanding"]
+    return "\n".join(out)
+
+
+ASSISTANT_SYSTEM = """You are the assistant built into the shop system of NyamsComm Electronics, an electronics dealer in Kenya \
+(phones, laptops, TVs, audio, accessories). You talk to the shop owner.
+
+How to answer:
+- Answer exactly the question that was asked, and put the answer in the first sentence. Do not change the subject.
+- Only talk about restocking when the question is about restocking or stock levels, or when it is directly needed to \
+answer. A question about sales, prices, customers, debts or staff gets an answer about that, not a restock list.
+- Facts about this shop must come from the shop data you are given. Never make up products, numbers, names or dates. \
+If the data does not contain what is needed, say so plainly in one sentence and give the closest thing the data does show.
+- Work out totals, counts and averages carefully from the data, and give the figures you used when it helps.
+- Match products by meaning, not exact spelling (e.g. "iphone 13" matches "Apple iPhone 13 128GB"). If several \
+products could match, list them.
+- Buying prices, costs, profit and margins are not available to you. If asked, say that and offer what you can \
+(for example revenue at selling price).
+- General business questions (pricing ideas, marketing, how to handle a slow product) may be answered with general \
+knowledge, made specific to this shop and its data.
+- Money is in Kenyan Shillings, written like KSh 12,500.
+- Keep it short: one or two sentences for a simple question, short bullet points for lists. Use **bold** for product \
+and customer names. No headings, no tables."""
+
+
+def _clean_history(history):
+    """Last few chat turns from the browser, shaped into valid alternating user/assistant messages."""
+    msgs = []
+    for m in (history if isinstance(history, list) else [])[-12:]:
+        role, text = (m or {}).get("role"), str((m or {}).get("text") or "").strip()[:4000]
+        if role not in ("user", "assistant") or not text:
+            continue
+        if msgs and msgs[-1]["role"] == role:
+            msgs[-1]["content"] += "\n\n" + text
+        else:
+            msgs.append({"role": role, "content": text})
+    while msgs and msgs[0]["role"] != "user":
+        msgs.pop(0)
+    while msgs and msgs[-1]["role"] != "assistant":  # the new question is appended after the history
+        msgs.pop()
+    return msgs
+
+
+# Models that accept the server-side refusal fallback (re-runs a declined request on another model)
+FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2")
+
+
+def ask_claude(api_key, data, question, history):
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key, timeout=90.0, max_retries=1)
+    params = dict(
+        model=ANTHROPIC_MODEL,
+        max_tokens=8000,
+        system=[{"type": "text", "text": ASSISTANT_SYSTEM},
+                {"type": "text", "text": "# Shop data (live snapshot)\n\n" + shop_data_text(data)}],
+        messages=_clean_history(history) + [{"role": "user", "content": question}],
+        output_config={"effort": "medium"},
+    )
+    if ANTHROPIC_MODEL in FALLBACK_MODELS:
+        response = client.beta.messages.create(**params, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+    else:
+        response = client.messages.create(**params)
+    if response.stop_reason == "refusal":
+        raise ValueError("Claude declined to answer")
+    text = "".join(b.text for b in response.content if b.type == "text").strip()
+    if not text:
+        raise ValueError("empty answer")
+    return text
+
+
+# ---- rule-based answers (no API key, or the AI service failed) ----
+def _ksh(n):
+    return f"KSh {n:,.0f}"
+
+
+def _words(text):
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+STOP_WORDS = {"the", "a", "an", "of", "is", "are", "how", "many", "much", "do", "i", "we", "have", "what", "which",
+              "price", "stock", "in", "for", "my", "me", "left", "there", "any", "does", "it", "cost", "sell", "sold",
+              "and", "to", "on", "at", "this", "that", "with", "today", "week", "month", "show", "tell", "about", "us"}
+
+
+def _match_products(question, products):
+    """Products whose name shares the most meaningful words with the question."""
+    q = _words(question) - STOP_WORDS
+    if not q:
+        return [], False
+    scored = []
     for p in products:
-        lines.append(
-            f"{p['name']} | {p['category']} | {p['quantity']} | {p['reorder_level']} | "
-            f"{p['selling_price']:.0f} | {sales_7d.get(p['id'], 0)} | "
-            f"{'YES' if p['quantity'] <= p['reorder_level'] else 'no'}"
-        )
-    return "\n".join(lines), products, sales_7d
+        name = _words(p["name"]) | _words(p["category"])
+        hits = len(q & name)
+        if hits:
+            scored.append((hits, p))
+    if not scored:
+        return [], False
+    best = max(h for h, _ in scored)
+    return [p for h, p in scored if h == best][:8], best == len(q)  # exact: every word of the question matched
 
 
-def fallback_recommendation(products, sales_7d):
-    """Rule-based advice used when no API key is configured or the AI call fails."""
+def _product_line(p):
+    status = "out of stock" if p["quantity"] == 0 else f"{p['quantity']} in stock" + (
+        " (low)" if p["quantity"] <= p["reorder_level"] else "")
+    return (f"- **{p['name']}**: {status}, selling at {_ksh(p['selling_price'])}. "
+            f"Sold {p['sold_7d']} in the last 7 days, {p['sold_30d']} in the last 30 days.")
+
+
+def _restock_answer(products):
     low = [p for p in products if p["quantity"] <= p["reorder_level"]]
     if not low:
-        return "All products are above their reorder levels. No restocking needed right now."
-    lines = ["**Restock recommendations** (rule-based):", ""]
-    for p in sorted(low, key=lambda p: p["quantity"] / max(p["reorder_level"], 1)):
-        weekly = sales_7d.get(p["id"], 0)
-        target = max(p["reorder_level"] * 2, weekly * 2)
-        order_qty = max(target - p["quantity"], 1)
-        lines.append(
-            f"- **{p['name']}**: {p['quantity']} left (reorder at {p['reorder_level']}). "
-            f"Order **{order_qty}** units."
-        )
+        return "All products are above their reorder levels. Nothing needs restocking right now."
+    lines = [f"**{len(low)} products need restocking:**"]
+    for p in sorted(low, key=lambda p: p["quantity"] / max(p["reorder_level"], 1))[:25]:
+        order = max(max(p["reorder_level"] * 2, p["sold_7d"] * 2) - p["quantity"], 1)
+        lines.append(f"- **{p['name']}**: {p['quantity']} left (reorder at {p['reorder_level']}). Order about **{order}**.")
+    if len(low) > 25:
+        lines.append(f"- …and {len(low) - 25} more (see the Restocking page).")
     return "\n".join(lines)
 
 
-def call_claude(api_key, system, user_msg):
-    body = json.dumps(
-        {
-            "model": ANTHROPIC_MODEL,
-            "max_tokens": 1024,
-            "system": system,
-            "messages": [{"role": "user", "content": user_msg}],
-        }
-    ).encode()
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=body,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        data = json.loads(resp.read())
-    return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+def rule_based_answer(data, question):
+    q = question.lower()
+    w = _words(q)
+    products, periods = data["products"], data["periods"]
+
+    def has(*keys):
+        return any((k in w) if " " not in k else (k in q) for k in keys)
+
+    if has("debt", "debts", "debtor", "debtors", "creditor", "creditors", "owe", "owes", "owed", "deni"):
+        if not data["debts"]:
+            return "There are no outstanding debts: nobody owes the shop and the shop owes nobody."
+        owed_to = [r for r in data["debts"] if r["kind"] == "debtor"]
+        owing = [r for r in data["debts"] if r["kind"] == "creditor"]
+        lines = []
+        if owed_to:
+            lines.append(f"**People owe the shop {_ksh(sum(r['balance'] for r in owed_to))}:**")
+            lines += [f"- **{r['name']}**: {_ksh(r['balance'])}{', due ' + r['due_date'] if r['due_date'] else ''}"
+                      for r in owed_to]
+        if owing:
+            lines.append(f"**The shop owes {_ksh(sum(r['balance'] for r in owing))}:**")
+            lines += [f"- **{r['name']}**: {_ksh(r['balance'])}{', due ' + r['due_date'] if r['due_date'] else ''}"
+                      for r in owing]
+        return "\n".join(lines)
+
+    if has("customer", "customers", "reward", "loyal", "loyalty", "win back", "points", "regulars"):
+        cs = data["customers"]
+        if not cs:
+            return "There are no loyalty customers recorded yet. Add a customer's phone number at the till to start."
+        top = cs[:5]
+        risk = [c for c in cs if c["status"] == "At risk"][:5]
+        lines = [f"You have **{len(cs)} loyalty customers**. Top spenders (worth rewarding):"]
+        lines += [f"- **{c['name']}**: {_ksh(c['total_spent'])} spent, {c['tier']}, {c['points']} points" for c in top]
+        if risk:
+            lines.append("Not seen for a while (worth winning back):")
+            lines += [f"- **{c['name']}**: last visit {c['days_since_visit']} days ago" for c in risk]
+        return "\n".join(lines)
+
+    if has("staff", "employee", "employees", "worker", "workers", "cashier") and data["staff"]:
+        return "**Sales by staff, last 30 days:**\n" + "\n".join(
+            f"- **{r['staff']}**: {r['sales']} sales, {_ksh(r['revenue'])}" for r in data["staff"])
+
+    if has("out of stock", "finished", "zero stock", "run out", "ran out"):
+        out = [p for p in products if p["quantity"] == 0]
+        if not out:
+            return "Nothing is out of stock right now."
+        return f"**{len(out)} products are out of stock:**\n" + "\n".join(f"- **{p['name']}**" for p in out[:30])
+
+    if has("restock", "reorder", "low", "order", "buy", "running low", "replenish"):
+        return _restock_answer(products)
+
+    if has("slow", "slowest", "not selling", "dead", "stuck", "worst"):
+        idle = [p for p in products if p["sold_30d"] == 0 and p["quantity"] > 0]
+        idle.sort(key=lambda p: -p["quantity"] * p["selling_price"])
+        if not idle:
+            return "Every product in stock has sold at least once in the last 30 days."
+        return (f"**{len(idle)} products in stock have not sold in the last 30 days.** "
+                "These hold the most money (stock × selling price):\n" + "\n".join(
+                    f"- **{p['name']}**: {p['quantity']} in stock, {_ksh(p['quantity'] * p['selling_price'])}"
+                    for p in idle[:10]))
+
+    if has("fast", "fastest", "best", "top", "popular", "most", "selling", "seller", "sellers", "moving"):
+        week = has("week", "7")
+        key = "sold_7d" if week else "sold_30d"
+        top = sorted([p for p in products if p[key] > 0], key=lambda p: (-p[key], p["name"]))[:10]
+        label = "last 7 days" if week else "last 30 days"
+        if not top:
+            return f"No products have sold in the {label}."
+        return f"**Best sellers, {label} (units sold):**\n" + "\n".join(
+            f"- **{p['name']}**: {p[key]} sold" + (f", {_ksh(p['revenue_30d'])} revenue" if not week else "")
+            for p in top)
+
+    if has("value", "worth", "total stock", "how many products", "inventory"):
+        units = sum(p["quantity"] for p in products)
+        value = sum(p["quantity"] * p["selling_price"] for p in products)
+        return (f"You have **{len(products)} products** and **{units:,} units** in stock, worth **{_ksh(value)}** at "
+                "selling price. (Buying prices are hidden, so I can't give the value at cost.)")
+
+    period = ("today" if has("today", "leo") else "yesterday" if has("yesterday", "jana") else
+              "this_month" if has("month") else "last_7_days" if has("week", "weekly", "7") else
+              "all_time" if has("all time", "ever", "total") else None)
+    if period or has("sales", "sale", "revenue", "made", "make", "earn", "earned", "income", "money", "sold", "sell"):
+        matched = _match_products(question, products)[0] if not period else []
+        if matched and len(matched) <= 3 and has("sold", "sell", "sales"):
+            return "\n".join(_product_line(p) for p in matched)
+        p = periods[period or "today"]
+        label = {"today": "Today", "yesterday": "Yesterday", "this_month": "This month",
+                 "last_7_days": "In the last 7 days", "all_time": "In total"}[period or "today"]
+        if not p["n"]:
+            return f"{label} there have been no sales."
+        return (f"{label} you made **{p['n']} sales** worth **{_ksh(p['revenue'])}** ({p['items']} items"
+                f"{', ' + _ksh(p['discount']) + ' in discounts' if p['discount'] else ''}).")
+
+    matched, exact = _match_products(question, products)
+    if matched:
+        lines = [_product_line(p) for p in matched]
+        return "\n".join(lines if exact else ["I couldn't find an exact match. The closest products are:"] + lines)
+
+    return ("I can answer questions about sales (today, this week, this month), best and slow sellers, a product's "
+            "stock or price, out-of-stock and low-stock items, stock value, customers, debts and staff sales. "
+            "Try asking one of those, e.g. *How much did I sell today?* or *How many iPhone 13 do I have?*")
 
 
 @app.post("/api/assistant")
 def assistant():
-    data = request.get_json(silent=True) or {}
-    question = str(data.get("question") or "What should I restock this week?").strip()[:1000]
-    db = get_db()
-    context, products, sales_7d = build_inventory_context(db)
-
+    body = request.get_json(silent=True) or {}
+    question = str(body.get("question") or "").strip()[:1000]
+    if not question:
+        return jsonify(error="Type a question."), 400
+    data = gather_shop_data(get_db())
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        return jsonify(
-            answer=fallback_recommendation(products, sales_7d),
-            source="rules",
-            note="Set ANTHROPIC_API_KEY in backend/.env to enable Claude AI.",
-        )
-
-    system = (
-        "You are the NyamsComm assistant, a friendly, practical helper for NyamsComm Electronics, an electronics dealer shop in Kenya "
-        "(phones, laptops, TVs, audio, accessories). "
-        "Use ONLY the inventory data provided. All money is in Kenyan Shillings (KSh). "
-        "Be concise: use short bullet points, bold product names, give specific order quantities. "
-        "Do not mention buying prices, costs, profit or margins. Prioritise items at or below reorder level "
-        "and fast sellers. Expensive items (phones, laptops, TVs) tie up a lot of cash, so recommend small, "
-        "careful orders for them and point out cheap fast-moving accessories worth bundling. If asked about customers, suggest who to reward with bonus points and who to win back "
-        "(at-risk customers). Keep answers under 250 words."
-    )
-    user_msg = f"Current shop inventory:\n{context}\n\nShop owner's question: {question}"
+        return jsonify(answer=rule_based_answer(data, question), source="rules",
+                       note="Basic answers only. Set ANTHROPIC_API_KEY in backend/.env for full AI answers.")
     try:
-        answer = call_claude(api_key, system, user_msg)
-        return jsonify(answer=answer, source="claude")
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        detail = exc.read().decode(errors="ignore")[:300] if isinstance(exc, urllib.error.HTTPError) else str(exc)
-        app.logger.warning("Claude API failed: %s", detail)
-        return jsonify(
-            answer=fallback_recommendation(products, sales_7d),
-            source="rules",
-            note="AI service unavailable, showing rule-based advice.",
-        )
+        return jsonify(answer=ask_claude(api_key, data, question, body.get("history")), source="claude")
+    except Exception as exc:  # no internet, bad key, rate limit, refusal...
+        app.logger.warning("Claude API failed: %s", str(exc)[:300])
+        return jsonify(answer=rule_based_answer(data, question), source="rules",
+                       note="AI service unavailable, showing a basic answer.")
 
 
 @app.get("/api/health")

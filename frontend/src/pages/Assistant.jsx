@@ -4,9 +4,10 @@ import { api } from '../api.js'
 import { Button, Card, PageHeader, inputClass } from '../components/ui.jsx'
 
 const SUGGESTIONS = [
-  'What should I restock this week?',
+  'How much did I sell today?',
   'Which products are selling fastest?',
-  'How much money do I need to restock low items?',
+  'What should I restock this week?',
+  'Who owes the shop money?',
   'Which customers should I reward or win back?',
 ]
 
@@ -33,7 +34,7 @@ function Markdown({ text }) {
 
 export default function Assistant() {
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: "Habari! I'm the NyamsComm assistant. I analyse your phones, electronics and accessories stock and sales. Ask me what to restock." },
+    { role: 'assistant', text: "Habari! I'm the NyamsComm assistant. Ask me anything about the shop: sales, products and prices, stock, customers, debts or staff." },
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -44,7 +45,9 @@ export default function Assistant() {
     setInput('')
     setLoading(true)
     try {
-      const res = await api.ask(question)
+      // recent chat (without the greeting) so follow-up questions like "and yesterday?" make sense
+      const history = messages.slice(1).slice(-10).map(({ role, text }) => ({ role, text }))
+      const res = await api.ask(question, history)
       setMessages((m) => [...m, { role: 'assistant', text: res.answer, source: res.source, note: res.note }])
     } catch (err) {
       setMessages((m) => [...m, { role: 'assistant', text: `Sorry, something went wrong: ${err.message}` }])
@@ -55,7 +58,7 @@ export default function Assistant() {
 
   return (
     <>
-      <PageHeader title="AI Assistant" subtitle="Restock advice based on your real inventory and sales." />
+      <PageHeader title="AI Assistant" subtitle="Ask questions about your sales, stock, customers and debts. Answers use your live shop data." />
       <Card className="flex h-[calc(100vh-12rem)] min-h-[28rem] flex-col">
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {messages.map((m, i) => (
@@ -73,7 +76,7 @@ export default function Assistant() {
               </div>
             </div>
           ))}
-          {loading && <p className="pl-11 text-sm text-slate-400">Analysing your stock…</p>}
+          {loading && <p className="pl-11 text-sm text-slate-400">Thinking…</p>}
         </div>
 
         <div className="border-t border-slate-100 p-4">
@@ -85,7 +88,7 @@ export default function Assistant() {
             ))}
           </div>
           <form onSubmit={(e) => { e.preventDefault(); ask(input) }} className="flex gap-2">
-            <input className={inputClass} placeholder="Ask about your stock…" value={input} onChange={(e) => setInput(e.target.value)} />
+            <input className={inputClass} placeholder="Ask anything about your shop…" value={input} onChange={(e) => setInput(e.target.value)} />
             <Button type="submit" disabled={loading || !input.trim()}><Send size={16} /></Button>
           </form>
         </div>

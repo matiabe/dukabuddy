@@ -88,7 +88,7 @@ export const api = {
   reportTypes: () => request('/reports/types'),
   monthlyReports: () => request('/reports/monthly'),
   sendMonthly: (month) => request('/reports/monthly/send', { method: 'POST', body: { month } }),
-  ask: (question) => request('/assistant', { method: 'POST', body: { question } }),
+  ask: (question, history) => request('/assistant', { method: 'POST', body: { question, history } }),
 }
 
 // "2026-10-31 15:24:09" -> "31 Oct, 15:24" ("Today, 15:24" for today)

@@ -57,7 +57,12 @@ export default function App() {
 
   if (!state) return <p className="p-8 text-slate-500">{error || 'Loading…'}</p>
   if (!state.user) {
-    return <Login setup={state.setup_required} shopName={state.shop_name} onLogin={(user) => setState({ ...state, user, setup_required: false })} />
+    const onLogin = (user) => {
+      // A fresh login always starts on the home page, not on whatever page was open last time
+      history.replaceState(null, '', location.pathname + location.search)
+      setState({ ...state, user, setup_required: false })
+    }
+    return <Login setup={state.setup_required} shopName={state.shop_name} onLogin={onLogin} />
   }
   const logout = async () => {
     await api.logout().catch(() => {})
@@ -74,7 +79,8 @@ export default function App() {
 
 function Shell({ auth }) {
   const nav = NAV.filter((n) => auth.isOwner || n.staff)
-  const home = auth.isOwner ? 'dashboard' : 'sales'
+  // Home page after logging in: the Dashboard for the owner, the Shop Overview for staff (the Dashboard is owner-only)
+  const home = auth.isOwner ? 'dashboard' : 'overview'
   const allowed = (id) => nav.some((n) => n.id === id)
   const fromHash = () => (allowed(location.hash.slice(1)) ? location.hash.slice(1) : home)
   const [active, setActive] = useState(fromHash)
